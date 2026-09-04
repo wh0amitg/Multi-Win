@@ -126,22 +126,50 @@ public partial class MainWindow : Window
             (BypassCheck.IsChecked == true ? "\nTPM bypass: ON" : "");
     }
 
+    private void Window_DragOver(object sender, DragEventArgs e)
+    {
+        e.Effects = HasIsoDrop(e) ? DragDropEffects.Copy : DragDropEffects.None;
+        e.Handled = true;
+    }
+
+    private async void Window_Drop(object sender, DragEventArgs e)
+    {
+        if (_busy) return;
+        if (e.Data.GetData(DataFormats.FileDrop) is not string[] files) return;
+        var isos = files
+            .Where(f => f.EndsWith(".iso", StringComparison.OrdinalIgnoreCase) && File.Exists(f))
+            .ToList();
+        ShowStep(0);
+        if (isos.Count == 0) { ImageDesc.Text = "Drop an .iso file."; return; }
+        foreach (var f in isos) await AddLocalIsoFileAsync(f);
+    }
+
+    private static bool HasIsoDrop(DragEventArgs e) =>
+        e.Data.GetDataPresent(DataFormats.FileDrop) &&
+        e.Data.GetData(DataFormats.FileDrop) is string[] files &&
+        files.Any(f => f.EndsWith(".iso", StringComparison.OrdinalIgnoreCase));
+
     private async void BrowseIso_Click(object sender, RoutedEventArgs e)
     {
+        if (_busy) return;
         var dlg = new Microsoft.Win32.OpenFileDialog
         {
             Filter = "ISO images (*.iso)|*.iso|All files (*.*)|*.*",
             Title = "Choose ISO image"
         };
         if (dlg.ShowDialog() != true) return;
+        await AddLocalIsoFileAsync(dlg.FileName);
+    }
 
-        var d0 = IsoDetect.FromFileName(dlg.FileName);
-        var fi = new FileInfo(dlg.FileName);
+    private async Task AddLocalIsoFileAsync(string path)
+    {
+        var d0 = IsoDetect.FromFileName(path);
+        var fi = new FileInfo(path);
         var item = new WindowsImage(
             Id: "local-" + Guid.NewGuid().ToString("N")[..8],
             Name: d0.Name + " (local ISO)",
             Version: d0.Name,
-            Arch: IsoDetect.DetectArch(dlg.FileName),
+            Arch: IsoDetect.DetectArch(path),
             DownloadUrl: "",
             Sha256: "",
             SizeBytes: fi.Length,
@@ -150,15 +178,15 @@ public partial class MainWindow : Window
             NeedsUefi: false)
         {
             OsFamily = d0.OsFamily,
-            LocalPath = dlg.FileName,
+            LocalPath = path,
             Icon = d0.Icon
         };
         _images.Add(item);
         ImageBox.SelectedItem = item;
         UpdateWarning();
-        ImageDesc.Text = $"Inspecting ISO contents...\nFile: {dlg.FileName}";
+        ImageDesc.Text = $"Inspecting ISO contents...\nFile: {path}";
 
-        var d = await IsoInspect.InspectAsync(dlg.FileName);
+        var d = await IsoInspect.InspectAsync(path);
         int idx = _images.IndexOf(item);
         if (idx < 0) return;
         var confirmed = item with
@@ -172,7 +200,67 @@ public partial class MainWindow : Window
         _images[idx] = confirmed;
         ImageBox.SelectedItem = confirmed;
         UpdateWarning();
-        ImageDesc.Text = $"Detected: {d.Name} ({(d.FromContents ? "ISO contents" : "file name")})\nFile: {dlg.FileName}";
+        ImageDesc.Text = $"Detected: {d.Name} ({(d.FromContents ? "ISO contents" : "file name")})\nFile: {path}";
+    }
+
+    private async void AddUrl_Click(object sender, RoutedEventArgs e)
+    {
+        if (_busy) return;
+        string url = UrlBox.Text.Trim();
+        if (!Uri.TryCreate(url, UriKind.Absolute, out var uri) ||
+            (uri.Scheme != Uri.UriSchemeHttp && uri.Scheme != Uri.UriSchemeHttps))
+        { ImageDesc.Text = "Paste a direct http(s) link to an .iso file."; return; }
+        string fileName = Uri.UnescapeDataString(Path.GetFileName(uri.LocalPath));
+        if (!fileName.EndsWith(".iso", StringComparison.OrdinalIgnoreCase))
+        { ImageDesc.Text = "Link must point to an .iso file."; return; }
+        var d = IsoDetect.FromFileName(fileName);
+        var item = new WindowsImage(
+            Id: "url-" + Guid.NewGuid().ToString("N")[..8],
+            Name: d.Name + " (URL)",
+            Version: d.Name,
+            Arch: IsoDetect.DetectArch(fileName),
+            DownloadUrl: url,
+            Sha256: "",
+            SizeBytes: 0,
+            MinRamMb: d.MinRamMb,
+            NeedsTpm: false,
+            NeedsUefi: false)
+        {
+            OsFamily = d.OsFamily,
+            Icon = d.Icon
+        };
+        _images.Add(item);
+        ImageBox.SelectedItem = item;
+        UpdateWarning();
+        ImageDesc.Text = $"Checking link...\n{url}";
+        long size = await TryGetContentLengthAsync(url);
+        int idx = _images.IndexOf(item);
+        if (idx < 0) return;
+        var sized = item with { SizeBytes = Math.Max(0, size) };
+        _images[idx] = sized;
+        ImageBox.SelectedItem = sized;
+        UpdateWarning();
+        ImageDesc.Text = size > 0
+            ? $"Detected: {d.Name} (file name) · {FmtBytes(size)}\n{url}"
+            : $"Detected: {d.Name} (file name, size unknown)\n{url}";
+    }
+
+    private static async Task<long> TryGetContentLengthAsync(string url)
+    {
+        try
+        {
+            using var http = new System.Net.Http.HttpClient { Timeout = TimeSpan.FromSeconds(15) };
+            using var req = new System.Net.Http.HttpRequestMessage(System.Net.Http.HttpMethod.Head, url);
+            using var resp = await http.SendAsync(req, System.Net.Http.HttpCompletionOption.ResponseHeadersRead);
+            return resp.Content.Headers.ContentLength ?? -1;
+        }
+        catch { return -1; }
+    }
+
+    private void CancelBtn_Click(object sender, RoutedEventArgs e)
+    {
+        _cts?.Cancel();
+        Log("Cancelling...");
     }
 
     private void Next_Click(object sender, RoutedEventArgs e)
@@ -192,6 +280,7 @@ public partial class MainWindow : Window
     }
 
     private bool _busy;
+    private CancellationTokenSource? _cts;
 
     private void Log(string msg)
     {
@@ -232,6 +321,12 @@ public partial class MainWindow : Window
         StartBtn.IsEnabled = false;
         BackBtn.IsEnabled = false;
         NextBtn.IsEnabled = false;
+        _cts?.Dispose();
+        _cts = new CancellationTokenSource();
+        CancellationToken ct = _cts.Token;
+        CancelBtn.Visibility = Visibility.Visible;
+        bool downloadedNow = false;
+        string isoPath = "";
         try
         {
             Log($"Start: {img.Name} -> {usb.Model}" +
@@ -239,7 +334,7 @@ public partial class MainWindow : Window
             var dir = Path.Combine(Path.GetTempPath(), "Multi-Win");
             Directory.CreateDirectory(dir);
             bool isLocal = !string.IsNullOrEmpty(img.LocalPath);
-            var isoPath = isLocal ? img.LocalPath! : Path.Combine(dir, img.Id + ".iso");
+            isoPath = isLocal ? img.LocalPath! : Path.Combine(dir, img.Id + ".iso");
 
             if (isLocal)
             {
@@ -265,7 +360,8 @@ public partial class MainWindow : Window
                         : $"{FmtBytes((long)p.BytesPerSecond)}/s · {FmtBytes(p.DownloadedBytes)} downloaded";
                     StatusText.Text = p.Percent >= 0 ? $"Downloading: {p.Percent:F1}%" : "Downloading...";
                 });
-                await _img.DownloadAsync(img.DownloadUrl, isoPath, prog);
+                await _img.DownloadAsync(img.DownloadUrl, isoPath, prog, ct);
+                downloadedNow = true;
                 Log("Download finished.");
             }
 
@@ -275,6 +371,7 @@ public partial class MainWindow : Window
                 SpeedText.Text = "";
                 Progress.IsIndeterminate = true;
                 Log("Verifying SHA256 (may take a while on big ISOs)...");
+                ct.ThrowIfCancellationRequested();
                 var hash = await Task.Run(() => ImageService.Sha256Of(isoPath));
                 Progress.IsIndeterminate = false;
                 Progress.Value = 100;
@@ -291,9 +388,17 @@ public partial class MainWindow : Window
             StatusText.Text = "Flashing USB...";
             SpeedText.Text = "";
             Progress.IsIndeterminate = true;
+            string family = img.OsFamily;
+            if (!isLocal && family == "Unknown")
+            {
+                Log("Checking downloaded image contents...");
+                var di = await IsoInspect.InspectAsync(isoPath, ct);
+                family = di.OsFamily;
+                Log($"Downloaded image is: {di.Name} ({(di.FromContents ? "ISO contents" : "file name")})");
+            }
             bool bypass = BypassCheck.IsChecked == true;
             var flashLog = new Progress<string>(m => Log(m));
-            if (img.OsFamily != "Windows")
+            if (family != "Windows")
             {
                 Log("Non-Windows ISO — raw (dd-style) write...");
                 var fp = new Progress<double>(v =>
@@ -302,17 +407,28 @@ public partial class MainWindow : Window
                     Progress.Value = v;
                     StatusText.Text = $"Flashing: {v:F1}%";
                 });
-                await Task.Run(() => _usb.WriteRaw(isoPath, usb, flashLog, fp));
+                await Task.Run(() => _usb.WriteRaw(isoPath, usb, flashLog, fp, ct));
             }
             else
             {
                 Log($"Formatting {usb.DeviceId} ({usb.Model})...");
-                await Task.Run(() => _usb.WriteImage(isoPath, usb, bypass, flashLog));
+                await Task.Run(() => _usb.WriteImage(isoPath, usb, bypass, flashLog, ct));
             }
             Progress.IsIndeterminate = false;
             Progress.Value = 100;
             StatusText.Text = "Done ✓";
             Log("Done. USB is ready, you can close the app.");
+        }
+        catch (OperationCanceledException)
+        {
+            Progress.IsIndeterminate = false;
+            StatusText.Text = "Cancelled";
+            Log("Cancelled by user.");
+            if (downloadedNow)
+            {
+                try { if (File.Exists(isoPath)) File.Delete(isoPath); } catch { }
+                Log("Partial download deleted.");
+            }
         }
         catch (Exception ex)
         {
@@ -326,6 +442,9 @@ public partial class MainWindow : Window
             StartBtn.IsEnabled = true;
             BackBtn.IsEnabled = _step > 0;
             NextBtn.IsEnabled = true;
+            CancelBtn.Visibility = Visibility.Collapsed;
+            _cts?.Dispose();
+            _cts = null;
         }
     }
 }

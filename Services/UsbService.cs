@@ -53,12 +53,17 @@ public class UsbService
         try
         {
             ct.ThrowIfCancellationRequested();
+            CopyPlan plan = DeterminePlan(isoLetter, L);
+            if (plan == CopyPlan.ConvertEsd)
+                RequireTempSpace(isoLetter, L);
+
             L("Preparing USB (diskpart: clean, MBR, FAT32, active)...");
             string usbLetter = PrepareUsb(disk, Emit, ct);
             L($"USB ready as {usbLetter}");
 
             ct.ThrowIfCancellationRequested();
-            CopyFiles(isoLetter, usbLetter, L, Emit, ct);
+            CopyFiles(isoLetter, usbLetter, plan,
+                SafeName(Path.GetFileNameWithoutExtension(isoPath)), L, Emit, ct);
 
             if (bypassTpm)
             {
@@ -124,15 +129,46 @@ public class UsbService
         L("Raw write finished.");
     }
 
-    private static void CopyFiles(string isoLetter, string usbLetter,
+    private enum CopyPlan { Direct, SplitWim, ConvertEsd }
+
+    private static CopyPlan DeterminePlan(string isoLetter, Action<string> L)
+    {
+        string wim = isoLetter + @"\sources\install.wim";
+        string esd = isoLetter + @"\sources\install.esd";
+        if (File.Exists(wim) && new FileInfo(wim).Length > Fat32MaxFile)
+        {
+            L($"install.wim is {Fmt(new FileInfo(wim).Length)} > 4GB, will copy without it and split.");
+            return CopyPlan.SplitWim;
+        }
+        if (File.Exists(esd) && new FileInfo(esd).Length > Fat32MaxFile)
+        {
+            L($"install.esd is {Fmt(new FileInfo(esd).Length)} > 4GB, will convert to split WIM.");
+            return CopyPlan.ConvertEsd;
+        }
+        return CopyPlan.Direct;
+    }
+
+    private static void RequireTempSpace(string isoLetter, Action<string> L)
+    {
+        long need = new FileInfo(isoLetter + @"\sources\install.esd").Length + 1L * 1024 * 1024 * 1024;
+        string? root = Path.GetPathRoot(Path.GetTempPath());
+        if (root != null)
+        {
+            long free = new DriveInfo(root).AvailableFreeSpace;
+            if (free < need)
+                throw new IOException(
+                    $"Not enough temp space for ESD conversion: need {Fmt(need)}, free {Fmt(free)} on {root}.");
+        }
+        L($"Temp space check passed ({Fmt(need)} needed for conversion).");
+    }
+
+    private static void CopyFiles(string isoLetter, string usbLetter, CopyPlan plan, string tempTag,
         Action<string> L, Action<string> emit, CancellationToken ct)
     {
         string srcWim = isoLetter + @"\sources\install.wim";
-        string srcEsd = isoLetter + @"\sources\install.esd";
 
-        if (File.Exists(srcWim) && new FileInfo(srcWim).Length > Fat32MaxFile)
+        if (plan == CopyPlan.SplitWim)
         {
-            L($"install.wim is {Fmt(new FileInfo(srcWim).Length)} > 4GB, copying without it, then splitting...");
             int rc = Run("robocopy",
                 $"{isoLetter}\\ {usbLetter}\\ /E /R:2 /W:5 /MT:8 /XF install.wim",
                 emit, ct);
@@ -145,18 +181,74 @@ public class UsbService
                 emit, ct);
             L($"dism exit code: {d}");
             if (d != 0) throw new IOException($"dism Split-Image failed, exit code {d}.");
+            return;
         }
-        else
+
+        if (plan == CopyPlan.ConvertEsd)
         {
-            if (File.Exists(srcEsd) && new FileInfo(srcEsd).Length > Fat32MaxFile)
-                throw new IOException("install.esd exceeds the FAT32 4GB limit, this image is not supported.");
-            L("Copying files (robocopy, takes a while, watch the % lines)...");
-            int rc = Run("robocopy",
-                $"{isoLetter}\\ {usbLetter}\\ /E /R:2 /W:5 /MT:8",
-                emit, ct);
-            L($"robocopy exit code: {rc} (0-7 = success)");
-            if (rc > 7) throw new IOException($"robocopy failed, exit code {rc}.");
+            ConvertEsd(isoLetter, usbLetter, tempTag, L, emit, ct);
+            return;
         }
+
+        int rc2 = Run("robocopy",
+            $"{isoLetter}\\ {usbLetter}\\ /E /R:2 /W:5 /MT:8",
+            emit, ct);
+        L($"robocopy exit code: {rc2} (0-7 = success)");
+        if (rc2 > 7) throw new IOException($"robocopy failed, exit code {rc2}.");
+    }
+
+    private static void ConvertEsd(string isoLetter, string usbLetter, string tempTag,
+        Action<string> L, Action<string> emit, CancellationToken ct)
+    {
+        string srcEsd = isoLetter + @"\sources\install.esd";
+        int rc = Run("robocopy",
+            $"{isoLetter}\\ {usbLetter}\\ /E /R:2 /W:5 /MT:8 /XF install.esd",
+            emit, ct);
+        L($"robocopy exit code: {rc}");
+        if (rc > 7) throw new IOException($"robocopy failed, exit code {rc}.");
+
+        L("Reading ESD editions...");
+        var infoLines = new List<string>();
+        int gi = Run("dism", $"/Get-ImageInfo /ImageFile:\"{srcEsd}\"", infoLines.Add, ct);
+        if (gi != 0) throw new IOException($"dism Get-ImageInfo failed, exit code {gi}.");
+        var indexes = infoLines
+            .Select(l => Regex.Match(l, @":\s*(\d+)\s*$"))
+            .Where(m => m.Success)
+            .Select(m => int.Parse(m.Groups[1].Value))
+            .Distinct().OrderBy(i => i).ToList();
+        if (indexes.Count == 0) throw new IOException("Could not read ESD edition list.");
+        L($"Found {indexes.Count} edition(s), exporting to WIM (slowest part, be patient)...");
+
+        string tmpDir = Path.Combine(Path.GetTempPath(), "Multi-Win");
+        Directory.CreateDirectory(tmpDir);
+        string tmpWim = Path.Combine(tmpDir, tempTag + ".conv.wim");
+        try { if (File.Exists(tmpWim)) File.Delete(tmpWim); } catch { }
+        try
+        {
+            foreach (int i in indexes)
+            {
+                ct.ThrowIfCancellationRequested();
+                L($"Exporting edition {i}/{indexes.Max()}...");
+                int ex = Run("dism",
+                    $"/Export-Image /SourceImageFile:\"{srcEsd}\" /SourceIndex:{i} /DestinationImageFile:\"{tmpWim}\" /Compress:max /CheckIntegrity",
+                    emit, ct);
+                if (ex != 0) throw new IOException($"dism Export-Image (index {i}) failed, exit code {ex}.");
+            }
+            L($"Splitting into {SplitChunkMb}MB chunks...");
+            int d = Run("dism",
+                $"/Split-Image /ImageFile:\"{tmpWim}\" /SWMFile:\"{usbLetter}\\sources\\install.swm\" /FileSize:{SplitChunkMb}",
+                emit, ct);
+            L($"dism exit code: {d}");
+            if (d != 0) throw new IOException($"dism Split-Image failed, exit code {d}.");
+        }
+        finally { try { if (File.Exists(tmpWim)) File.Delete(tmpWim); } catch { } }
+    }
+
+    private static string SafeName(string n)
+    {
+        string t = Regex.Replace(n ?? "", @"[^A-Za-z0-9_-]+", "_").Trim('_');
+        if (t.Length == 0) return "image";
+        return t.Length > 40 ? t[..40] : t;
     }
 
     private static string PrepareUsb(int disk, Action<string> emit, CancellationToken ct)

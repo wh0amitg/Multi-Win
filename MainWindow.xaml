@@ -6,9 +6,10 @@
         xmlns:local="clr-namespace:WinMultiInstaller"
         xmlns:ui="http://schemas.inkore.net/lib/ui/wpf/modern"
         mc:Ignorable="d"
-        Title="Multi-Win" Height="740" Width="760" MinHeight="620" MinWidth="680"
+        Title="Multi-Win" Height="740" Width="760" MinHeight="660" MinWidth="680"
         ui:WindowHelper.UseModernWindowStyle="True"
-        ui:WindowHelper.SystemBackdropType="Mica">
+        ui:WindowHelper.SystemBackdropType="Mica"
+        AllowDrop="True" Drop="Window_Drop" DragOver="Window_DragOver">
     <Grid Margin="28,20,28,20">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto"/>
@@ -120,6 +121,15 @@
                     </ComboBox.ItemTemplate>
                 </ComboBox>
                 <Button Content="Browse local ISO file..." Margin="0,10,0,0" Height="34" Click="BrowseIso_Click"/>
+                <TextBlock Text="...or paste a direct .iso link:" Opacity="0.6" Margin="0,10,0,0"/>
+                <Grid Margin="0,6,0,0">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="Auto"/>
+                    </Grid.ColumnDefinitions>
+                    <TextBox x:Name="UrlBox" Height="34" VerticalContentAlignment="Center" ToolTip="https://.../file.iso"/>
+                    <Button Grid.Column="1" Margin="10,0,0,0" Content="Add" Height="34" MinWidth="80" Click="AddUrl_Click"/>
+                </Grid>
                 <TextBlock x:Name="ImageDesc" Margin="0,10,0,0" Opacity="0.7" TextWrapping="Wrap"/>
             </StackPanel>
         </Border>
@@ -194,6 +204,8 @@
                     Style="{StaticResource AccentButtonStyle}" Click="Next_Click"/>
             <Button Grid.Column="2" x:Name="StartBtn" Content="Flash" MinWidth="150" Height="36"
                     Style="{StaticResource AccentButtonStyle}" Click="Start_Click" Visibility="Collapsed"/>
+            <Button Grid.Column="2" x:Name="CancelBtn" Content="Cancel" MinWidth="150" Height="36"
+                    Click="CancelBtn_Click" Visibility="Collapsed"/>
         </Grid>
     </Grid>
 </Window>
