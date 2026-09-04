@@ -1,0 +1,110 @@
+[
+  {
+    "Id": "win7-sp1-x64",
+    "Name": "Windows 7 Ultimate SP1 x64 (Fully Updated)",
+    "Version": "7",
+    "Arch": "x64",
+    "DownloadUrl": "https://archive.org/download/windows-7-ultimate-x-64-sp-1-fully-updated/Windows%207%20Ultimate%20x64%20-%20SP1%20%28Fully%20Updated%29.iso",
+    "Sha256": "",
+    "SizeBytes": 4972900352,
+    "MinRamMb": 2048,
+    "NeedsTpm": false,
+    "NeedsUefi": false
+  },
+  {
+    "Id": "vista-sp2-x64",
+    "Name": "Windows Vista Ultimate SP2 x64 (EN)",
+    "Version": "Vista",
+    "Arch": "x64",
+    "DownloadUrl": "https://archive.org/download/vistasp2_ldr_escrow.251211-1611/6.0.6003.23713.vistasp2_ldr_escrow.251211-1611_amd64fre_client-ultimate_retail_en-us.iso",
+    "Sha256": "",
+    "SizeBytes": 3995324416,
+    "MinRamMb": 1024,
+    "NeedsTpm": false,
+    "NeedsUefi": false
+  },
+  {
+    "Id": "win81-x64",
+    "Name": "Windows 8.1 x64 (Fully Updated)",
+    "Version": "8.1",
+    "Arch": "x64",
+    "DownloadUrl": "https://archive.org/download/windows-8.1-fully-updated/Windows%208.1%20Fully%20Updated.iso",
+    "Sha256": "",
+    "SizeBytes": 5997461504,
+    "MinRamMb": 2048,
+    "NeedsTpm": false,
+    "NeedsUefi": false
+  },
+  {
+    "Id": "win10-22h2-x64",
+    "Name": "Windows 10 22H2 x64",
+    "Version": "10",
+    "Arch": "x64",
+    "DownloadUrl": "https://archive.org/download/windows-10_20981236/Windows%2010.iso",
+    "Sha256": "",
+    "SizeBytes": 4893900800,
+    "MinRamMb": 4096,
+    "NeedsTpm": false,
+    "NeedsUefi": false
+  },
+  {
+    "Id": "win10-21h2-x64",
+    "Name": "Windows 10 21H2 x64 (Enterprise Eval)",
+    "Version": "10",
+    "Arch": "x64",
+    "DownloadUrl": "https://archive.org/download/19044.1288.211006-0501.21h-2-release-svc-refresh-cliententerpriseeval-oemret-x-64-fre-en-us/19044.1288.211006-0501.21h2_release_svc_refresh_CLIENTENTERPRISEEVAL_OEMRET_x64FRE_en-us.iso",
+    "Sha256": "",
+    "SizeBytes": 5344178176,
+    "MinRamMb": 4096,
+    "NeedsTpm": false,
+    "NeedsUefi": false
+  },
+  {
+    "Id": "win10-20h2-x64",
+    "Name": "Windows 10 20H2 x64",
+    "Version": "10",
+    "Arch": "x64",
+    "DownloadUrl": "https://archive.org/download/19042.1023.210517-1726.20-h-2-release-svc-prod-3-clientmulti-x-64-fre-en-us/19042.1023.210517-1726.20H2_RELEASE_SVC_PROD3_CLIENTMULTI_X64FRE_EN-US.ISO",
+    "Sha256": "",
+    "SizeBytes": 4567336960,
+    "MinRamMb": 4096,
+    "NeedsTpm": false,
+    "NeedsUefi": false
+  },
+  {
+    "Id": "win11-24h2-x64",
+    "Name": "Windows 11 24H2 x64",
+    "Version": "11",
+    "Arch": "x64",
+    "DownloadUrl": "https://archive.org/download/Win11_24H2_English_x64/Win11_24H2_English_x64.iso",
+    "Sha256": "",
+    "SizeBytes": 5819484160,
+    "MinRamMb": 4096,
+    "NeedsTpm": true,
+    "NeedsUefi": true
+  },
+  {
+    "Id": "win11-23h2-x64",
+    "Name": "Windows 11 23H2 x64 (build 22631.5548)",
+    "Version": "11",
+    "Arch": "x64",
+    "DownloadUrl": "https://archive.org/download/22631.5548-windows-11-23h2-english/%2822631.5548%29%20Windows_11_23H2_English.ISO",
+    "Sha256": "",
+    "SizeBytes": 6373011456,
+    "MinRamMb": 4096,
+    "NeedsTpm": true,
+    "NeedsUefi": true
+  },
+  {
+    "Id": "win11-25h2-x64",
+    "Name": "Windows 11 25H2 x64 (build 26200.4946)",
+    "Version": "11",
+    "Arch": "x64",
+    "DownloadUrl": "https://archive.org/download/win1125h2_26200.4946/26200.4946.250808-1815.25H2_GE_RELEASE_SVC_PROD1_CLIENTMULTI_X64FRE_EN-US.ISO",
+    "Sha256": "",
+    "SizeBytes": 6382419968,
+    "MinRamMb": 4096,
+    "NeedsTpm": true,
+    "NeedsUefi": true
+  }
+]
