@@ -12,23 +12,54 @@ public class UsbService
     private const long Fat32MaxFile = 4294967295L;
     private const int SplitChunkMb = 3800;
 
+    public enum FileSystemMode { Fat32Split, NtfsDirect }
+
     public List<UsbDrive> GetUsbDrives()
     {
         var list = new List<UsbDrive>();
+        var styles = DiskStyles();
         using var searcher = new ManagementObjectSearcher(
-            "SELECT DeviceID, Model, Size FROM Win32_DiskDrive WHERE InterfaceType='USB'");
+            "SELECT DeviceID, Model, Size, Index FROM Win32_DiskDrive WHERE InterfaceType='USB'");
         foreach (ManagementObject d in searcher.Get())
         {
             var deviceId = d["DeviceID"]?.ToString() ?? "";
-            var model = d["Model"]?.ToString() ?? "USB Drive";
+            var model = (d["Model"]?.ToString() ?? "USB Drive").Trim();
             ulong.TryParse(d["Size"]?.ToString(), out var size);
-            list.Add(new UsbDrive(deviceId, model.Trim(), size, ""));
+            int index = -1;
+            try { index = Convert.ToInt32(d["Index"]); } catch { }
+            string style = styles.TryGetValue(index, out var s) ? s : "?";
+            list.Add(new UsbDrive(deviceId, model, size, "")
+            {
+                PartitionStyle = style,
+                Display = $"{model} · {Fmt((long)size)} · {style}"
+            });
         }
         return list;
     }
 
-    public void WriteImage(string isoPath, UsbDrive target, bool bypassTpm,
-        IProgress<string>? log = null, CancellationToken ct = default)
+    private static Dictionary<int, string> DiskStyles()
+    {
+        var map = new Dictionary<int, string>();
+        try
+        {
+            var opts = new System.Management.EnumerationOptions { Timeout = TimeSpan.FromSeconds(8), ReturnImmediately = true };
+            using var s = new ManagementObjectSearcher(
+                new ManagementScope(@"root\Microsoft\Windows\Storage"),
+                new ObjectQuery("SELECT Number, PartitionStyle FROM MSFT_Disk"), opts);
+            foreach (ManagementObject o in s.Get())
+            {
+                int num = Convert.ToInt32(o["Number"]);
+                map[num] = Convert.ToUInt16(o["PartitionStyle"]) switch { 1 => "MBR", 2 => "GPT", _ => "?" };
+            }
+        }
+        catch { }
+        return map;
+    }
+
+    public void WriteImage(string isoPath, UsbDrive target, string arch, WindowsCustom custom,
+        IProgress<string>? log = null, CancellationToken ct = default,
+        FileSystemMode fsMode = FileSystemMode.Fat32Split, bool verify = false,
+        string? volumeLabel = null)
     {
         void L(string m) => log?.Report(m);
         long lastEmit = 0;
@@ -43,9 +74,6 @@ public class UsbService
         int disk = ParseDiskNumber(target.DeviceId);
         AssertUsbDisk(disk, target.DeviceId);
         long isoLen = new FileInfo(isoPath).Length;
-        if (target.SizeBytes > 0 && target.SizeBytes < (ulong)(isoLen + 200L * 1024 * 1024))
-            throw new IOException(
-                $"USB drive too small: {Fmt((long)target.SizeBytes)}, image needs {Fmt(isoLen)}.");
 
         L("Mounting ISO...");
         string isoLetter = MountIso(isoPath, Emit, ct);
@@ -53,22 +81,52 @@ public class UsbService
         try
         {
             ct.ThrowIfCancellationRequested();
+            if (fsMode == FileSystemMode.NtfsDirect)
+            {
+                long needUsb = isoLen + 200L * 1024 * 1024;
+                if (target.SizeBytes > 0 && target.SizeBytes < (ulong)needUsb)
+                    throw new IOException(
+                        $"USB drive too small: {Fmt((long)target.SizeBytes)}, need {Fmt(needUsb)}.");
+                CheckUefiNtfsAsset(L);
+                L("Preparing USB (diskpart: clean, MBR, NTFS, active)...");
+                string usbLetterNtfs = PrepareUsb(disk, Emit, ct, "ntfs", volumeLabel ?? "MULTIWIN");
+                L($"USB ready as {usbLetterNtfs}");
+                ct.ThrowIfCancellationRequested();
+                int rcNtfs = Run("robocopy",
+                    $"{isoLetter}\\ {usbLetterNtfs}\\ /E /R:2 /W:5 /MT:8",
+                    Emit, ct);
+                L($"robocopy exit code: {rcNtfs} (0-7 = success)");
+                if (rcNtfs > 7) throw new IOException($"robocopy failed, exit code {rcNtfs}.");
+                FinishTweaks(usbLetterNtfs, arch, custom, L);
+                if (verify)
+                {
+                    L("Verifying files...");
+                    UsbCheckService.VerifyFileCopy(isoLetter, usbLetterNtfs, L, ct);
+                }
+                return;
+            }
+
             CopyPlan plan = DeterminePlan(isoLetter, L);
+            long needUsbFat = isoLen + (plan == CopyPlan.ConvertEsd ? 3L * 1024 * 1024 * 1024 : 200L * 1024 * 1024);
+            if (target.SizeBytes > 0 && target.SizeBytes < (ulong)needUsbFat)
+                throw new IOException(
+                    $"USB drive too small: {Fmt((long)target.SizeBytes)}, need {Fmt(needUsbFat)}.");
             if (plan == CopyPlan.ConvertEsd)
                 RequireTempSpace(isoLetter, L);
 
             L("Preparing USB (diskpart: clean, MBR, FAT32, active)...");
-            string usbLetter = PrepareUsb(disk, Emit, ct);
+            string usbLetter = PrepareUsb(disk, Emit, ct, "fat32", volumeLabel ?? "MULTIWIN");
             L($"USB ready as {usbLetter}");
 
             ct.ThrowIfCancellationRequested();
             CopyFiles(isoLetter, usbLetter, plan,
                 SafeName(Path.GetFileNameWithoutExtension(isoPath)), L, Emit, ct);
 
-            if (bypassTpm)
+            FinishTweaks(usbLetter, arch, custom, L);
+            if (verify)
             {
-                BypassService.Inject(usbLetter + "\\");
-                L("TPM/SecureBoot bypass written (autounattend.xml).");
+                L("Verifying files...");
+                UsbCheckService.VerifyFileCopy(isoLetter, usbLetter, L, ct);
             }
         }
         finally
@@ -80,7 +138,7 @@ public class UsbService
 
     public void WriteRaw(string isoPath, UsbDrive target,
         IProgress<string>? log = null, IProgress<double>? progress = null,
-        CancellationToken ct = default)
+        CancellationToken ct = default, bool verify = false)
     {
         void L(string m) => log?.Report(m);
         int disk = ParseDiskNumber(target.DeviceId);
@@ -127,6 +185,8 @@ public class UsbService
         }
         dst.Flush();
         L("Raw write finished.");
+        if (verify)
+            UsbCheckService.VerifyRaw(isoPath, target.DeviceId, L, progress, ct);
     }
 
     private enum CopyPlan { Direct, SplitWim, ConvertEsd }
@@ -230,7 +290,7 @@ public class UsbService
                 ct.ThrowIfCancellationRequested();
                 L($"Exporting edition {i}/{indexes.Max()}...");
                 int ex = Run("dism",
-                    $"/Export-Image /SourceImageFile:\"{srcEsd}\" /SourceIndex:{i} /DestinationImageFile:\"{tmpWim}\" /Compress:max /CheckIntegrity",
+                    $"/Export-Image /SourceImageFile:\"{srcEsd}\" /SourceIndex:{i} /DestinationImageFile:\"{tmpWim}\" /Compress:fast /CheckIntegrity",
                     emit, ct);
                 if (ex != 0) throw new IOException($"dism Export-Image (index {i}) failed, exit code {ex}.");
             }
@@ -251,12 +311,56 @@ public class UsbService
         return t.Length > 40 ? t[..40] : t;
     }
 
-    private static string PrepareUsb(int disk, Action<string> emit, CancellationToken ct)
+    internal static string SanitizeLabel(string label)
     {
+        string t = Regex.Replace(label ?? "", @"[^A-Za-z0-9 _-]+", "").Trim();
+        if (t.Length == 0) return "MULTIWIN";
+        t = t.ToUpperInvariant();
+        return t.Length > 11 ? t[..11] : t;
+    }
+
+    private static void FinishTweaks(string usbLetter, string arch, WindowsCustom custom, Action<string> L)
+    {
+        if (custom.HasTweaks())
+            BypassService.Inject(usbLetter + "\\", arch, custom, L);
+
+        if (custom.EmptyAppraiser)
+        {
+            string ap = usbLetter + @"\sources\appraiserres.dll";
+            if (File.Exists(ap))
+            {
+                string bak = ap + ".bak";
+                try { if (File.Exists(bak)) File.Delete(bak); } catch { }
+                File.Move(ap, bak);
+                File.WriteAllBytes(ap, Array.Empty<byte>());
+                L("appraiserres.dll emptied (helps in-place upgrade without TPM).");
+            }
+            else L("appraiserres.dll not found, skipping.");
+        }
+    }
+
+    private static void CheckUefiNtfsAsset(Action<string> L)
+    {
+        try
+        {
+            string img = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Assets", "uefi-ntfs.img");
+            if (!File.Exists(img))
+                L("Note: NTFS mode without Assets/uefi-ntfs.img boots on BIOS/CSM and NTFS-capable UEFI only. " +
+                  "For max UEFI compat use FAT32 (split) mode.");
+            else
+                L("uefi-ntfs.img found (future dual-partition chainload can use it).");
+        }
+        catch { }
+    }
+
+    private static string PrepareUsb(int disk, Action<string> emit, CancellationToken ct, string fs = "fat32", string label = "MULTIWIN")
+    {
+        string fsLower = (fs ?? "fat32").ToLowerInvariant() == "ntfs" ? "ntfs" : "fat32";
+        string vol = SanitizeLabel(label);
         string script = Path.Combine(Path.GetTempPath(), $"multiwin-diskpart-{disk}.txt");
         File.WriteAllText(script,
             $"select disk {disk}\nclean\nconvert mbr\ncreate partition primary\n" +
-            "format fs=fat32 quick label=\"MULTIWIN\"\nactive\nassign\nexit\n");
+            $"format fs={fsLower} quick label=\"{vol}\"\nactive\nassign\nexit\n");
         try
         {
             var outLines = new List<string>();
@@ -286,6 +390,16 @@ public class UsbService
             l => { var t = l.Trim(); if (t.Length == 1 && char.IsLetter(t[0])) found = t.ToUpperInvariant() + ":"; },
             ct);
         return found;
+    }
+
+    public string? TryGetVolumeLetter(UsbDrive target)
+    {
+        try
+        {
+            int disk = ParseDiskNumber(target.DeviceId);
+            return QueryUsbLetter(disk, CancellationToken.None);
+        }
+        catch { return null; }
     }
 
     private static string MountIso(string isoPath, Action<string> emit, CancellationToken ct)
@@ -347,15 +461,34 @@ public class UsbService
             StandardOutputEncoding = Encoding.UTF8,
             StandardErrorEncoding = Encoding.UTF8,
         };
-        using var p = new Process { StartInfo = psi, EnableRaisingEvents = true };
-        p.OutputDataReceived += (_, e) => { if (e.Data != null) onLine?.Invoke(e.Data); };
-        p.ErrorDataReceived += (_, e) => { if (e.Data != null) onLine?.Invoke(e.Data); };
+        using var p = new Process { StartInfo = psi };
         p.Start();
-        p.BeginOutputReadLine();
-        p.BeginErrorReadLine();
+        var readOut = Task.Run(() => Pump(p.StandardOutput, onLine));
+        var readErr = Task.Run(() => Pump(p.StandardError, onLine));
         p.WaitForExit();
+        Task.WaitAll(readOut, readErr);
         ct.ThrowIfCancellationRequested();
         return p.ExitCode;
+    }
+
+    private static void Pump(StreamReader r, Action<string>? onLine)
+    {
+        var sb = new StringBuilder();
+        var buf = new char[4096];
+        int n;
+        while ((n = r.Read(buf, 0, buf.Length)) > 0)
+        {
+            for (int i = 0; i < n; i++)
+            {
+                char c = buf[i];
+                if (c == '\r' || c == '\n')
+                {
+                    if (sb.Length > 0) { onLine?.Invoke(sb.ToString()); sb.Clear(); }
+                }
+                else sb.Append(c);
+            }
+        }
+        if (sb.Length > 0) onLine?.Invoke(sb.ToString());
     }
 
     private static bool IsImportant(string l) =>
@@ -366,7 +499,7 @@ public class UsbService
         || l.StartsWith("Ended :", StringComparison.OrdinalIgnoreCase)
         || l.StartsWith("Speed :", StringComparison.OrdinalIgnoreCase);
 
-    private static string Fmt(long b) => b switch
+    internal static string Fmt(long b) => b switch
     {
         < 1024 => $"{b} B",
         < 1024L * 1024 => $"{b / 1024.0:F1} KB",

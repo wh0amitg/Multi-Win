@@ -11,6 +11,11 @@ pick an OS from the list (or throw in your own .iso), pick a USB stick, hit Flas
 - win11 TPM / SecureBoot / RAM bypass through autounattend
 - live progress while it works: speed, downloaded/total, ETA, step-by-step log
 - windows goes on file-copy style (MBR + FAT32 so it boots on BIOS and UEFI, huge `install.wim` gets split automatically), linux goes on raw (dd-style) so it actually boots
+- NTFS direct mode (no wim split, fast) for BIOS / NTFS-capable UEFI; FAT32 split stays the safe default
+- bad-blocks surface check before flash + file/byte verify after flash (optional)
+- usb speed benchmark, ISO cache manager (`%TEMP%\Multi-Win`), save-log button
+- image source switch (built-in list / local file / direct URL), custom volume label, early "USB too small" warning, auto-refresh of USB list, detailed summary + confirm dialog
+- one-click catalog update from URL + Microsoft retail flow (drop `Assets/Fido.ps1` from pbatard/Fido, or browser fallback)
 
 ## usage
 

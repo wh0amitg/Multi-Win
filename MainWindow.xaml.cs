@@ -27,6 +27,7 @@ public partial class MainWindow : Window
         TrySetAppLogo();
         Loaded += async (_, _) => await InitAsync();
         ImageBox.SelectionChanged += (_, _) => UpdateWarning();
+        UsbBox.SelectionChanged += (_, _) => UpdateWarning();
     }
 
     private void TrySetAppLogo()
@@ -64,6 +65,7 @@ public partial class MainWindow : Window
             if (ImageBox.Items.Count > 0) ImageBox.SelectedIndex = 0;
             var drives = await Task.Run(() => _usb.GetUsbDrives());
             UsbBox.ItemsSource = drives;
+            RefreshCacheText();
             UpdateWarning();
             ShowStep(0);
         }
@@ -73,24 +75,48 @@ public partial class MainWindow : Window
         }
     }
 
-    private async void RefreshUsb_Click(object sender, RoutedEventArgs e)
+    private async void RefreshUsb_Click(object sender, RoutedEventArgs e) => await RefreshUsbAsync();
+
+    private async Task RefreshUsbAsync()
     {
+        if (UsbBox == null) return;
         UsbBox.IsEnabled = false;
-        try { UsbBox.ItemsSource = await Task.Run(() => _usb.GetUsbDrives()); }
+        try
+        {
+            UsbBox.ItemsSource = await Task.Run(() => _usb.GetUsbDrives());
+            if (UsbBox.SelectedItem == null && UsbBox.Items.Count > 0)
+                UsbBox.SelectedIndex = 0;
+            UpdateWarning();
+        }
         finally { UsbBox.IsEnabled = true; }
     }
 
     private void UpdateWarning()
     {
+        if (WarnText == null || ImageDesc == null) return;
         WarnText.Text = "";
         ImageDesc.Text = "";
         if (ImageBox.SelectedItem is WindowsImage img)
         {
-            ImageDesc.Text = $"{img.Name} · {img.Arch} · min RAM {img.MinRamMb} MB";
+            string size = img.SizeBytes > 0 ? FmtBytes(img.SizeBytes) :
+                (!string.IsNullOrEmpty(img.LocalPath) && File.Exists(img.LocalPath)
+                    ? FmtBytes(new FileInfo(img.LocalPath).Length) : "size unknown");
+            ImageDesc.Text = $"{img.Name} · {img.Arch} · {size} · min RAM {img.MinRamMb} MB";
             var warn = _hwInfo.CheckCompatibility(img);
             if (warn != null) WarnText.Text = "⚠ " + warn;
-            BypassCheck.IsEnabled = img.NeedsTpm;
-            if (!img.NeedsTpm) BypassCheck.IsChecked = false;
+            if (UsbBox.SelectedItem is UsbDrive usb && usb.SizeBytes > 0)
+            {
+                long need = img.SizeBytes > 0 ? img.SizeBytes :
+                    (!string.IsNullOrEmpty(img.LocalPath) && File.Exists(img.LocalPath)
+                        ? new FileInfo(img.LocalPath).Length : 0);
+                if (need > 0 && usb.SizeBytes < (ulong)need)
+                    WarnText.Text += (WarnText.Text.Length > 0 ? "\n" : "") +
+                        $"⚠ USB too small: {FmtBytes((long)usb.SizeBytes)} < {FmtBytes(need)} needed.";
+            }
+            BypassCheck.IsEnabled = img.NeedsTpm && img.OsFamily == "Windows";
+            if (!BypassCheck.IsEnabled) BypassCheck.IsChecked = false;
+            bool isWin = img.OsFamily == "Windows";
+            WinTweaks.Visibility = isWin ? Visibility.Visible : Visibility.Collapsed;
         }
     }
 
@@ -114,6 +140,7 @@ public partial class MainWindow : Window
         NextBtn.Visibility = _step < 2 ? Visibility.Visible : Visibility.Collapsed;
         StartBtn.Visibility = _step == 2 ? Visibility.Visible : Visibility.Collapsed;
         PaintBars();
+        if (_step == 1 && !_busy) _ = RefreshUsbAsync();
         if (_step == 2) UpdateSummary();
     }
 
@@ -121,9 +148,105 @@ public partial class MainWindow : Window
     {
         var img = ImageBox.SelectedItem as WindowsImage;
         var usb = UsbBox.SelectedItem as UsbDrive;
-        SummaryText.Text = $"Image: {img?.Name ?? "—"}\nUSB: {usb?.Model ?? "—"}" +
+        bool ntfs = FsBox.SelectedIndex == 1;
+        string fs = ntfs ? "NTFS (no split)" : "FAT32 (split)";
+        string isoSize = img == null ? "—" :
+            img.SizeBytes > 0 ? FmtBytes(img.SizeBytes) :
+            (!string.IsNullOrEmpty(img.LocalPath) && File.Exists(img.LocalPath)
+                ? FmtBytes(new FileInfo(img.LocalPath).Length) : "size unknown");
+        var opts = new List<string>();
+        if (VerifyCheck.IsChecked == true) opts.Add("verify");
+        if (BadBlocksCheck.IsChecked == true) opts.Add("bad-blocks check");
+        if (BypassCheck.IsChecked == true) opts.Add("TPM bypass");
+        SummaryText.Text = $"Image: {img?.Name ?? "—"} ({isoSize})" +
+            $"\nUSB: {usb?.Display ?? "—"}" +
             (img?.LocalPath != null ? $"\nFile: {img.LocalPath}" : "") +
-            (BypassCheck.IsChecked == true ? "\nTPM bypass: ON" : "");
+            (!string.IsNullOrWhiteSpace(img?.DownloadUrl) ? $"\nURL: {img.DownloadUrl}" : "") +
+            (img?.OsFamily == "Windows" ? $"\nFS: {fs} · label {UsbService.SanitizeLabel(LabelBox.Text)}" : "") +
+            (opts.Count > 0 ? $"\nOptions: {string.Join(", ", opts)}" : "");
+    }
+
+    private void RefreshCacheText()
+    {
+        try
+        {
+            var items = CacheService.ListCachedIsos();
+            long total = items.Sum(x => x.Size);
+            CacheText.Text = items.Count == 0
+                ? "Cache: empty."
+                : $"Cache: {items.Count} ISO(s), {CacheService.FormatBytes(total)} in %TEMP%\\Multi-Win.";
+        }
+        catch { CacheText.Text = ""; }
+    }
+
+    private void SourceBox_Changed(object sender, RoutedEventArgs e)
+    {
+        if (BrowsePanel == null || UrlPanel == null) return;
+        bool browse = SourceBox.SelectedIndex == 1;
+        bool url = SourceBox.SelectedIndex == 2;
+        BrowsePanel.Visibility = browse ? Visibility.Visible : Visibility.Collapsed;
+        UrlPanel.Visibility = url ? Visibility.Visible : Visibility.Collapsed;
+    }
+
+    private void UrlBox_KeyDown(object sender, System.Windows.Input.KeyEventArgs e)
+    {
+        if (e.Key == System.Windows.Input.Key.Enter)
+        {
+            e.Handled = true;
+            AddUrl_Click(sender, e);
+        }
+    }
+
+    private void ClearCache_Click(object sender, RoutedEventArgs e)
+    {
+        if (_busy) return;
+        int n = CacheService.ClearCache(Log);
+        RefreshCacheText();
+        ImageDesc.Text = n > 0 ? $"Cache cleared ({n} file(s))." : "Cache is already empty.";
+        Log(n > 0 ? $"Cache cleared ({n} file(s))." : "Cache is already empty.");
+    }
+
+    private async void Bench_Click(object sender, RoutedEventArgs e)
+    {
+        if (_busy) return;
+        if (UsbBox.SelectedItem is not UsbDrive usb)
+        { WarnText.Text = "Pick a USB drive first"; return; }
+        string? letter = await Task.Run(() => _usb.TryGetVolumeLetter(usb));
+        if (letter == null)
+        { BenchText.Text = "No volume letter — format the drive first or re-plug it."; return; }
+        BenchText.Text = $"Testing {letter} (128MB write+read)...";
+        BenchBtn.IsEnabled = false;
+        try
+        {
+            var (w, r) = await Task.Run(() => UsbCheckService.Benchmark(letter, Log));
+            BenchText.Text = $"{letter}: write {w:F1} MB/s · read {r:F1} MB/s";
+        }
+        catch (Exception ex)
+        {
+            BenchText.Text = "Benchmark failed: " + ex.GetBaseException().Message;
+            Log("Benchmark failed: " + ex.GetBaseException().Message);
+        }
+        finally { BenchBtn.IsEnabled = true; }
+    }
+
+    private void SaveLog_Click(object sender, RoutedEventArgs e)
+    {
+        var dlg = new Microsoft.Win32.SaveFileDialog
+        {
+            Filter = "Log files (*.log)|*.log|Text files (*.txt)|*.txt",
+            FileName = $"multiwin-{DateTime.Now:yyyyMMdd-HHmmss}.log",
+            Title = "Save flash log"
+        };
+        if (dlg.ShowDialog() != true) return;
+        try
+        {
+            File.WriteAllLines(dlg.FileName, LogBox.Items.Cast<object>().Select(x => x.ToString() ?? ""));
+            Log($"Log saved to {dlg.FileName}");
+        }
+        catch (Exception ex)
+        {
+            Log("Could not save log: " + ex.GetBaseException().Message);
+        }
     }
 
     private void Window_DragOver(object sender, DragEventArgs e)
@@ -165,6 +288,7 @@ public partial class MainWindow : Window
     {
         var d0 = IsoDetect.FromFileName(path);
         var fi = new FileInfo(path);
+        bool w11guess = IsoDetect.IsWindows11(d0.Name);
         var item = new WindowsImage(
             Id: "local-" + Guid.NewGuid().ToString("N")[..8],
             Name: d0.Name + " (local ISO)",
@@ -174,8 +298,8 @@ public partial class MainWindow : Window
             Sha256: "",
             SizeBytes: fi.Length,
             MinRamMb: d0.MinRamMb,
-            NeedsTpm: false,
-            NeedsUefi: false)
+            NeedsTpm: w11guess,
+            NeedsUefi: w11guess)
         {
             OsFamily = d0.OsFamily,
             LocalPath = path,
@@ -183,19 +307,23 @@ public partial class MainWindow : Window
         };
         _images.Add(item);
         ImageBox.SelectedItem = item;
+        SourceBox.SelectedIndex = 0;
         UpdateWarning();
         ImageDesc.Text = $"Inspecting ISO contents...\nFile: {path}";
 
         var d = await IsoInspect.InspectAsync(path);
         int idx = _images.IndexOf(item);
         if (idx < 0) return;
+        bool w11 = IsoDetect.IsWindows11(d.Name);
         var confirmed = item with
         {
             Name = d.Name + " (local ISO)",
             Version = d.Name,
             MinRamMb = d.MinRamMb,
             OsFamily = d.OsFamily,
-            Icon = d.Icon
+            Icon = d.Icon,
+            NeedsTpm = w11,
+            NeedsUefi = w11
         };
         _images[idx] = confirmed;
         ImageBox.SelectedItem = confirmed;
@@ -214,6 +342,7 @@ public partial class MainWindow : Window
         if (!fileName.EndsWith(".iso", StringComparison.OrdinalIgnoreCase))
         { ImageDesc.Text = "Link must point to an .iso file."; return; }
         var d = IsoDetect.FromFileName(fileName);
+        bool w11url = IsoDetect.IsWindows11(d.Name);
         var item = new WindowsImage(
             Id: "url-" + Guid.NewGuid().ToString("N")[..8],
             Name: d.Name + " (URL)",
@@ -223,14 +352,15 @@ public partial class MainWindow : Window
             Sha256: "",
             SizeBytes: 0,
             MinRamMb: d.MinRamMb,
-            NeedsTpm: false,
-            NeedsUefi: false)
+            NeedsTpm: w11url,
+            NeedsUefi: w11url)
         {
             OsFamily = d.OsFamily,
             Icon = d.Icon
         };
         _images.Add(item);
         ImageBox.SelectedItem = item;
+        SourceBox.SelectedIndex = 0;
         UpdateWarning();
         ImageDesc.Text = $"Checking link...\n{url}";
         long size = await TryGetContentLengthAsync(url);
@@ -309,9 +439,15 @@ public partial class MainWindow : Window
         if (UsbBox.SelectedItem is not UsbDrive usb)
         { StatusText.Text = "Pick a USB drive"; return; }
 
+        bool ntfsMode = FsBox.SelectedIndex == 1;
+        string label = UsbService.SanitizeLabel(LabelBox.Text);
         var confirm = MessageBox.Show(
             $"Drive \"{usb.Model}\" will be FORMATTED and all data on it will be erased.\n\n" +
-            $"Image: {img.Name}\nUSB: {usb.Model}\n\nContinue?",
+            $"Image: {img.Name}\nUSB: {usb.Display}\n" +
+            (img.OsFamily == "Windows"
+                ? $"Format: {(ntfsMode ? "NTFS (no split)" : "FAT32 (split)")} · label {label}\n"
+                : "Mode: raw (dd-style) write\n") +
+            "\nContinue?",
             "Multi-Win — confirm flash",
             MessageBoxButton.YesNo, MessageBoxImage.Warning, MessageBoxResult.No);
         if (confirm != MessageBoxResult.Yes)
@@ -388,16 +524,76 @@ public partial class MainWindow : Window
             StatusText.Text = "Flashing USB...";
             SpeedText.Text = "";
             Progress.IsIndeterminate = true;
+            if (BadBlocksCheck.IsChecked == true)
+            {
+                string? letter = await Task.Run(() => _usb.TryGetVolumeLetter(usb));
+                if (letter == null)
+                {
+                    Log("Bad-blocks check skipped: no volume letter (re-plug the drive).");
+                }
+                else
+                {
+                    Log($"Bad-blocks check on {letter} (1 pass, ~1 min)...");
+                    StatusText.Text = "Checking for bad blocks...";
+                    var bp = new Progress<double>(v =>
+                    {
+                        Progress.IsIndeterminate = false;
+                        Progress.Value = v;
+                        StatusText.Text = $"Bad-blocks check: {v:F0}%";
+                    });
+                    await Task.Run(() => UsbCheckService.CheckBadBlocks(letter, 1, Log, v => ((IProgress<double>)bp).Report(v), ct));
+                    Progress.IsIndeterminate = true;
+                    Log("Bad-blocks check passed.");
+                }
+            }
             string family = img.OsFamily;
-            if (!isLocal && family == "Unknown")
+            if (!isLocal)
             {
                 Log("Checking downloaded image contents...");
                 var di = await IsoInspect.InspectAsync(isoPath, ct);
                 family = di.OsFamily;
                 Log($"Downloaded image is: {di.Name} ({(di.FromContents ? "ISO contents" : "file name")})");
+                bool dlW11 = IsoDetect.IsWindows11(di.Name);
+                if (family == "Windows" && dlW11 != img.NeedsTpm)
+                {
+                    int diIdx = _images.IndexOf(img);
+                    if (diIdx >= 0)
+                    {
+                        var updated = img with
+                        {
+                            Name = di.Name + " (URL)",
+                            Version = di.Name,
+                            MinRamMb = di.MinRamMb,
+                            OsFamily = di.OsFamily,
+                            Icon = di.Icon,
+                            NeedsTpm = dlW11,
+                            NeedsUefi = dlW11
+                        };
+                        _images[diIdx] = updated;
+                        ImageBox.SelectedItem = updated;
+                        img = updated;
+                        UpdateWarning();
+                        UpdateSummary();
+                        Log(dlW11 ? "Confirmed Windows 11 — TPM bypass available."
+                                  : "Not Windows 11 — TPM bypass disabled.");
+                    }
+                }
             }
             bool bypass = BypassCheck.IsChecked == true;
+            string arch = img.Arch == "x86" ? "x86" : img.Arch == "arm64" ? "arm64" : "amd64";
+            var custom = new WindowsCustom(
+                bypass,
+                BypassNroCheck.IsChecked == true,
+                UserNameBox.Text,
+                PrivacyCheck.IsChecked == true,
+                BitLockerCheck.IsChecked == true,
+                AppraiserCheck.IsChecked == true,
+                LocaleCheck.IsChecked == true);
             var flashLog = new Progress<string>(m => Log(m));
+            bool verify = VerifyCheck.IsChecked == true;
+            var fsMode = FsBox.SelectedIndex == 1
+                ? UsbService.FileSystemMode.NtfsDirect
+                : UsbService.FileSystemMode.Fat32Split;
             if (family != "Windows")
             {
                 Log("Non-Windows ISO — raw (dd-style) write...");
@@ -407,17 +603,19 @@ public partial class MainWindow : Window
                     Progress.Value = v;
                     StatusText.Text = $"Flashing: {v:F1}%";
                 });
-                await Task.Run(() => _usb.WriteRaw(isoPath, usb, flashLog, fp, ct));
+                await Task.Run(() => _usb.WriteRaw(isoPath, usb, flashLog, fp, ct, verify));
             }
             else
             {
-                Log($"Formatting {usb.DeviceId} ({usb.Model})...");
-                await Task.Run(() => _usb.WriteImage(isoPath, usb, bypass, flashLog, ct));
+                Log($"Formatting {usb.DeviceId} ({usb.Model}, {usb.PartitionStyle}, " +
+                    (fsMode == UsbService.FileSystemMode.NtfsDirect ? "NTFS direct" : "FAT32 split") + ")...");
+                await Task.Run(() => _usb.WriteImage(isoPath, usb, arch, custom, flashLog, ct, fsMode, verify, label));
             }
             Progress.IsIndeterminate = false;
             Progress.Value = 100;
             StatusText.Text = "Done ✓";
             Log("Done. USB is ready, you can close the app.");
+            RefreshCacheText();
         }
         catch (OperationCanceledException)
         {

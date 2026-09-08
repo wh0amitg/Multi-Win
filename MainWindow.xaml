@@ -6,11 +6,12 @@
         xmlns:local="clr-namespace:WinMultiInstaller"
         xmlns:ui="http://schemas.inkore.net/lib/ui/wpf/modern"
         mc:Ignorable="d"
-        Title="Multi-Win" Height="740" Width="760" MinHeight="660" MinWidth="680"
+        Title="Multi-Win" Height="780" Width="700" MinHeight="740" MinWidth="660"
+        ResizeMode="CanMinimize"
         ui:WindowHelper.UseModernWindowStyle="True"
         ui:WindowHelper.SystemBackdropType="Mica"
         AllowDrop="True" Drop="Window_Drop" DragOver="Window_DragOver">
-    <Grid Margin="28,20,28,20">
+    <Grid Margin="20,14,20,14">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/>
@@ -29,15 +30,15 @@
                 <Image x:Name="HeaderLogo" Stretch="Uniform"/>
             </Border>
             <StackPanel Grid.Column="1" VerticalAlignment="Center">
-                <TextBlock Text="Multi-Win" FontSize="24" FontWeight="Bold"/>
-                <TextBlock Text="Windows and Linux USB installer" Opacity="0.65" FontSize="13"/>
+                <TextBlock Text="Multi-Win" FontSize="20" FontWeight="Bold"/>
+                <TextBlock Text="Windows and Linux USB installer" Opacity="0.65" FontSize="12"/>
             </StackPanel>
         </Grid>
 
-        <TextBlock Grid.Row="1" x:Name="HwText" Margin="0,12,0,0" TextWrapping="Wrap"
+        <TextBlock Grid.Row="1" x:Name="HwText" Margin="0,8,0,0" TextWrapping="Wrap"
                    Opacity="0.7" FontSize="12" Text="Detecting hardware..."/>
 
-        <Grid Grid.Row="2" Margin="0,16,0,0">
+        <Grid Grid.Row="2" Margin="0,10,0,0">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="*"/>
                 <ColumnDefinition Width="12"/>
@@ -59,19 +60,19 @@
             </StackPanel>
         </Grid>
 
-        <Border Grid.Row="3" x:Name="Step1Panel" Margin="0,16,0,0" CornerRadius="14"
+        <Border Grid.Row="3" x:Name="Step1Panel" Margin="0,12,0,0" CornerRadius="14"
                 Background="{DynamicResource CardBackgroundFillColorDefaultBrush}"
-                BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}" BorderThickness="1" Padding="20">
+                BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}" BorderThickness="1" Padding="16">
             <StackPanel VerticalAlignment="Center">
-                <Border Width="44" Height="44" CornerRadius="22" Background="#E3F2FD" HorizontalAlignment="Left">
-                    <Grid Width="24" Height="24" HorizontalAlignment="Center" VerticalAlignment="Center">
-                        <Ellipse Width="21" Height="21" Stroke="#0078D4" StrokeThickness="2"/>
-                        <Ellipse Width="6" Height="6" Fill="#0078D4"/>
-                    </Grid>
-                </Border>
-                <TextBlock Text="Choose OS image" FontSize="17" FontWeight="SemiBold" Margin="0,8,0,0"/>
-                <TextBlock Text="Pick which OS to put on USB, or add your own ISO." Opacity="0.6" Margin="0,2,0,0"/>
-                <ComboBox x:Name="ImageBox" Margin="0,14,0,0" Height="40">
+                <TextBlock Text="Choose OS image" FontSize="16" FontWeight="SemiBold"/>
+                <TextBlock Text="Source" FontSize="12" FontWeight="SemiBold" Opacity="0.6" Margin="0,10,0,0"/>
+                <ComboBox x:Name="SourceBox" Margin="0,4,0,0" Height="34" SelectionChanged="SourceBox_Changed">
+                    <ComboBoxItem Content="From built-in list" IsSelected="True"/>
+                    <ComboBoxItem Content="From disk (local ISO file)"/>
+                    <ComboBoxItem Content="From link (direct .iso URL)"/>
+                </ComboBox>
+                <TextBlock Text="Image" FontSize="12" FontWeight="SemiBold" Opacity="0.6" Margin="0,10,0,0"/>
+                <ComboBox x:Name="ImageBox" Margin="0,4,0,0" Height="38">
                     <ComboBox.ItemTemplate>
                         <DataTemplate>
                             <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
@@ -120,91 +121,123 @@
                         </DataTemplate>
                     </ComboBox.ItemTemplate>
                 </ComboBox>
-                <Button Content="Browse local ISO file..." Margin="0,10,0,0" Height="34" Click="BrowseIso_Click"/>
-                <TextBlock Text="...or paste a direct .iso link:" Opacity="0.6" Margin="0,10,0,0"/>
-                <Grid Margin="0,6,0,0">
+                <StackPanel x:Name="BrowsePanel" Margin="0,10,0,0" Visibility="Collapsed">
+                    <Button Content="Browse ISO file..." Height="34" Click="BrowseIso_Click"/>
+                    <TextBlock Text="...or drop an .iso anywhere on this window." Opacity="0.55" FontSize="12" Margin="0,6,0,0"/>
+                </StackPanel>
+                <Grid x:Name="UrlPanel" Margin="0,10,0,0" Visibility="Collapsed">
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="*"/>
                         <ColumnDefinition Width="Auto"/>
                     </Grid.ColumnDefinitions>
-                    <TextBox x:Name="UrlBox" Height="34" VerticalContentAlignment="Center" ToolTip="https://.../file.iso"/>
+                    <TextBox x:Name="UrlBox" Height="34" VerticalContentAlignment="Center" ToolTip="https://.../file.iso" KeyDown="UrlBox_KeyDown"/>
                     <Button Grid.Column="1" Margin="10,0,0,0" Content="Add" Height="34" MinWidth="80" Click="AddUrl_Click"/>
                 </Grid>
-                <TextBlock x:Name="ImageDesc" Margin="0,10,0,0" Opacity="0.7" TextWrapping="Wrap"/>
-            </StackPanel>
-        </Border>
-
-        <Border Grid.Row="3" x:Name="Step2Panel" Margin="0,16,0,0" CornerRadius="14"
-                Background="{DynamicResource CardBackgroundFillColorDefaultBrush}"
-                BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}" BorderThickness="1" Padding="20" Visibility="Collapsed">
-            <StackPanel VerticalAlignment="Center">
-                <Border Width="44" Height="44" CornerRadius="22" Background="#E3F2FD" HorizontalAlignment="Left">
-                    <Canvas Width="24" Height="24" HorizontalAlignment="Center" VerticalAlignment="Center">
-                        <Line X1="12" Y1="19" X2="12" Y2="7" Stroke="#0078D4" StrokeThickness="2"/>
-                        <Line X1="12" Y1="12" X2="6" Y2="6" Stroke="#0078D4" StrokeThickness="2"/>
-                        <Line X1="12" Y1="12" X2="18" Y2="6" Stroke="#0078D4" StrokeThickness="2"/>
-                        <Ellipse Canvas.Left="3" Canvas.Top="3" Width="5" Height="5" Stroke="#0078D4" StrokeThickness="2"/>
-                        <Polygon Points="18,3 21,7 15,7" Fill="#0078D4"/>
-                        <Rectangle Canvas.Left="10.5" Canvas.Top="18" Width="4" Height="4" Fill="#0078D4"/>
-                    </Canvas>
-                </Border>
-                <TextBlock Text="Choose USB drive" FontSize="17" FontWeight="SemiBold" Margin="0,8,0,0"/>
-                <TextBlock Text="All data on the drive will be erased!" Opacity="0.6" Margin="0,2,0,0"/>
-                <Grid Margin="0,14,0,0">
+                <TextBlock x:Name="ImageDesc" Margin="0,8,0,0" Opacity="0.7" TextWrapping="Wrap" FontSize="12"/>
+                <Grid Margin="0,4,0,0">
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="*"/>
                         <ColumnDefinition Width="Auto"/>
                     </Grid.ColumnDefinitions>
-                    <ComboBox x:Name="UsbBox" Height="36" DisplayMemberPath="Model"/>
-                    <Button Grid.Column="1" Margin="10,0,0,0" Content="Refresh" Click="RefreshUsb_Click" Height="36" MinWidth="100"/>
+                    <TextBlock x:Name="CacheText" Opacity="0.55" FontSize="12" TextWrapping="Wrap" VerticalAlignment="Center"/>
+                    <Button Grid.Column="1" Margin="10,0,0,0" Content="Clear cache" Height="28" MinWidth="90" Click="ClearCache_Click" ToolTip="Delete downloaded ISOs in %TEMP%\Multi-Win" Opacity="0.85"/>
                 </Grid>
-                <CheckBox x:Name="BypassCheck" Margin="0,14,0,0" Content="Bypass TPM / SecureBoot check (Win11 only)"/>
-                <TextBlock x:Name="WarnText" Margin="0,10,0,0" TextWrapping="Wrap" Foreground="#D83B01"/>
             </StackPanel>
         </Border>
 
-        <Border Grid.Row="3" x:Name="Step3Panel" Margin="0,16,0,0" CornerRadius="14"
+        <Border Grid.Row="3" x:Name="Step2Panel" Margin="0,12,0,0" CornerRadius="14"
                 Background="{DynamicResource CardBackgroundFillColorDefaultBrush}"
-                BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}" BorderThickness="1" Padding="20" Visibility="Collapsed">
+                BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}" BorderThickness="1" Padding="16" Visibility="Collapsed">
+            <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
             <StackPanel VerticalAlignment="Center">
-                <Border Width="44" Height="44" CornerRadius="22" Background="#E3F2FD" HorizontalAlignment="Left">
-                    <Path Data="M12 4V13 M8 10l4 4 4-4 M5 16v4h14v-4"
-                          Stroke="#0078D4" StrokeThickness="2" StrokeLineJoin="Round" StrokeStartLineCap="Round" StrokeEndLineCap="Round"
-                          Width="24" Height="24" Stretch="None"
-                          HorizontalAlignment="Center" VerticalAlignment="Center"/>
-                </Border>
-                <TextBlock Text="Download &amp; flash" FontSize="17" FontWeight="SemiBold" Margin="0,8,0,0"/>
-                <Border Margin="0,12,0,0" CornerRadius="10"
-                        Background="{DynamicResource ControlFillColorDefaultBrush}"
-                        BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}" BorderThickness="1" Padding="12">
-                    <TextBlock x:Name="SummaryText" TextWrapping="Wrap" Opacity="0.85"/>
-                </Border>
-                <ProgressBar x:Name="Progress" Margin="0,14,0,0" Height="10" Minimum="0" Maximum="100"/>
-                <TextBlock x:Name="StatusText" Margin="0,8,0,0" Text="Ready" Opacity="0.8"/>
-                <TextBlock x:Name="SpeedText" Margin="0,2,0,0" FontSize="12" Opacity="0.7" Text=""/>
+                <TextBlock Text="Choose USB drive" FontSize="16" FontWeight="SemiBold"/>
+                <TextBlock Text="All data on the drive will be erased!" Opacity="0.6" FontSize="12"/>
+                <TextBlock Text="Drive" FontSize="12" FontWeight="SemiBold" Opacity="0.6" Margin="0,10,0,0"/>
+                <Grid Margin="0,4,0,0">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="Auto"/>
+                    </Grid.ColumnDefinitions>
+                    <ComboBox x:Name="UsbBox" Height="34" DisplayMemberPath="Display"/>
+                    <Button Grid.Column="1" Margin="10,0,0,0" Content="Refresh" Click="RefreshUsb_Click" Height="34" MinWidth="100"/>
+                </Grid>
+                <TextBlock Text="File system &amp; label" FontSize="12" FontWeight="SemiBold" Opacity="0.6" Margin="0,10,0,0"/>
+                <Grid Margin="0,4,0,0">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="Auto"/>
+                    </Grid.ColumnDefinitions>
+                    <ComboBox x:Name="FsBox" Height="34" ToolTip="FAT32 splits install.wim (BIOS+UEFI safe). NTFS is fast, no split.">
+                        <ComboBoxItem Content="FAT32 (split, BIOS+UEFI safe)" IsSelected="True"/>
+                        <ComboBoxItem Content="NTFS (fast, no split)"/>
+                    </ComboBox>
+                    <Button Grid.Column="1" x:Name="BenchBtn" Margin="10,0,0,0" Content="Test speed" Click="Bench_Click" Height="34" MinWidth="100" ToolTip="Sequential write/read benchmark"/>
+                </Grid>
+                <Grid Margin="0,8,0,0">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto"/>
+                        <ColumnDefinition Width="*"/>
+                    </Grid.ColumnDefinitions>
+                    <TextBlock Text="Volume label:" VerticalAlignment="Center" Opacity="0.7" FontSize="12" Margin="0,0,10,0"/>
+                    <TextBox Grid.Column="1" x:Name="LabelBox" Height="32" VerticalContentAlignment="Center" MaxLength="11" Text="MULTIWIN" ToolTip="USB drive name after formatting (up to 11 characters)"/>
+                </Grid>
+                <TextBlock x:Name="BenchText" Margin="0,4,0,0" FontSize="12" Opacity="0.65" TextWrapping="Wrap"/>
+                <TextBlock Text="Checks" FontSize="12" FontWeight="SemiBold" Opacity="0.6" Margin="0,10,0,0"/>
+                <CheckBox x:Name="BadBlocksCheck" Margin="0,4,0,0" Content="Check for bad blocks before flash (slow)"/>
+                <CheckBox x:Name="VerifyCheck" Margin="0,4,0,0" Content="Verify files after flash (recommended)" IsChecked="True"/>
+            <CheckBox x:Name="BypassCheck" Margin="0,14,0,0" Content="Bypass TPM / SecureBoot check (Win11 only)"/>
+            <StackPanel x:Name="WinTweaks" Margin="0,10,0,0" Visibility="Collapsed">
+                <TextBlock Text="Windows setup tweaks" FontWeight="SemiBold"/>
+                <CheckBox x:Name="BypassNroCheck" Margin="0,6,0,0" Content="Skip online Microsoft account"/>
+                <TextBlock Text="Local username (blank = skip, blank password + autologon):" Opacity="0.7" Margin="0,6,0,0"/>
+                <TextBox x:Name="UserNameBox" Height="32" VerticalContentAlignment="Center" MaxLength="20"/>
+                <CheckBox x:Name="PrivacyCheck" Margin="0,6,0,0" Content="Skip privacy questions"/>
+                <CheckBox x:Name="BitLockerCheck" Margin="0,2,0,0" Content="Prevent automatic BitLocker encryption"/>
+                <CheckBox x:Name="AppraiserCheck" Margin="0,2,0,0" Content="Empty appraiserres.dll (in-place upgrade without TPM)"/>
+                <CheckBox x:Name="LocaleCheck" Margin="0,2,0,0" Content="Use this PC's timezone" IsChecked="True"/>
+            </StackPanel>
+                <TextBlock x:Name="WarnText" Margin="0,10,0,0" TextWrapping="Wrap" Foreground="#D83B01"/>
+                </StackPanel>
+                </ScrollViewer>
+        </Border>
+
+        <Border Grid.Row="3" x:Name="Step3Panel" Margin="0,12,0,0" CornerRadius="14"
+                Background="{DynamicResource CardBackgroundFillColorDefaultBrush}"
+                BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}" BorderThickness="1" Padding="16" Visibility="Collapsed">
+            <StackPanel VerticalAlignment="Center">
+                <TextBlock Text="Download &amp; flash" FontSize="16" FontWeight="SemiBold"/>
                 <Border Margin="0,10,0,0" CornerRadius="10"
                         Background="{DynamicResource ControlFillColorDefaultBrush}"
+                        BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}" BorderThickness="1" Padding="10">
+                    <TextBlock x:Name="SummaryText" TextWrapping="Wrap" Opacity="0.85" FontSize="12"/>
+                </Border>
+                <ProgressBar x:Name="Progress" Margin="0,10,0,0" Height="8" Minimum="0" Maximum="100"/>
+                <TextBlock x:Name="StatusText" Margin="0,6,0,0" Text="Ready" Opacity="0.8" FontSize="12"/>
+                <TextBlock x:Name="SpeedText" Margin="0,2,0,0" FontSize="12" Opacity="0.7" Text=""/>
+                <Border Margin="0,8,0,0" CornerRadius="10"
+                        Background="{DynamicResource ControlFillColorDefaultBrush}"
                         BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}" BorderThickness="1" Padding="8">
-                    <ListBox x:Name="LogBox" Height="120" BorderThickness="0" Background="Transparent"
+                    <ListBox x:Name="LogBox" Height="220" BorderThickness="0" Background="Transparent"
                              FontFamily="Consolas" FontSize="11" ScrollViewer.HorizontalScrollBarVisibility="Disabled"/>
                 </Border>
+                <Button Content="Save log..." Margin="0,8,0,0" Height="28" Click="SaveLog_Click" HorizontalAlignment="Right" MinWidth="110" Opacity="0.85"/>
             </StackPanel>
         </Border>
 
-        <Grid Grid.Row="4" Margin="0,18,0,0">
+        <Grid Grid.Row="4" Margin="0,12,0,0">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="Auto"/>
                 <ColumnDefinition Width="*"/>
                 <ColumnDefinition Width="Auto"/>
             </Grid.ColumnDefinitions>
-            <Button x:Name="BackBtn" Content="← Back" MinWidth="120" Height="36" Click="Back_Click" IsEnabled="False"/>
-            <TextBlock Grid.Column="1" Text="Multi-Win • v0.3" Opacity="0.35" FontSize="11"
+            <Button x:Name="BackBtn" Content="← Back" MinWidth="110" Height="32" Click="Back_Click" IsEnabled="False"/>
+              <TextBlock Grid.Column="1" Text="Multi-Win • v0.5" Opacity="0.35" FontSize="11"
                        HorizontalAlignment="Center" VerticalAlignment="Center"/>
-            <Button Grid.Column="2" x:Name="NextBtn" Content="Next →" MinWidth="130" Height="36"
+            <Button Grid.Column="2" x:Name="NextBtn" Content="Next →" MinWidth="120" Height="32"
                     Style="{StaticResource AccentButtonStyle}" Click="Next_Click"/>
-            <Button Grid.Column="2" x:Name="StartBtn" Content="Flash" MinWidth="150" Height="36"
+            <Button Grid.Column="2" x:Name="StartBtn" Content="Flash" MinWidth="140" Height="32"
                     Style="{StaticResource AccentButtonStyle}" Click="Start_Click" Visibility="Collapsed"/>
-            <Button Grid.Column="2" x:Name="CancelBtn" Content="Cancel" MinWidth="150" Height="36"
+            <Button Grid.Column="2" x:Name="CancelBtn" Content="Cancel" MinWidth="140" Height="32"
                     Click="CancelBtn_Click" Visibility="Collapsed"/>
         </Grid>
     </Grid>

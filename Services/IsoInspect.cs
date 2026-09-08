@@ -23,9 +23,12 @@ public static class IsoInspect
         bool Exists(string p) => Directory.Exists(root + p) || File.Exists(root + p);
 
         if (Exists(@"\sources\install.wim") || Exists(@"\sources\install.esd"))
-            return fallback.OsFamily == "Windows"
+        {
+            var baseOs = fallback.OsFamily == "Windows"
                 ? fallback with { FromContents = true }
                 : new IsoDetect.DetectedOs("Windows (custom ISO)", "Windows", "windows", 4096, true);
+            return IsoDetect.RefineWindowsName(root, baseOs);
+        }
 
         string info = root + @"\.disk\info";
         if (File.Exists(info))

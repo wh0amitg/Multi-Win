@@ -78,6 +78,34 @@ public static class IsoDetect
         return "x64";
     }
 
+    public static bool IsWindows11(string? name) =>
+        (name ?? "").Contains("Windows 11", StringComparison.OrdinalIgnoreCase);
+
+    public static DetectedOs RefineWindowsName(string mountedRoot, DetectedOs current)
+    {
+        if (current.OsFamily != "Windows") return current;
+        try
+        {
+            string setup = mountedRoot + @"\setup.exe";
+            if (!File.Exists(setup))
+                setup = mountedRoot + @"\sources\setup.exe";
+            if (!File.Exists(setup)) return current;
+            var vi = System.Diagnostics.FileVersionInfo.GetVersionInfo(setup);
+            return (vi.FileMajorPart, vi.FileMinorPart, vi.FileBuildPart) switch
+            {
+                (5, _, _) => current with { Name = "Windows XP", MinRamMb = 512, FromContents = true },
+                (6, 0, _) => current with { Name = "Windows Vista", MinRamMb = 1024, FromContents = true },
+                (6, 1, _) => current with { Name = "Windows 7", MinRamMb = 2048, FromContents = true },
+                (6, 2, _) or (6, 3, _) => current with { Name = "Windows 8.1", MinRamMb = 2048, FromContents = true },
+                (10, _, >= 22000) => current with { Name = "Windows 11", MinRamMb = 4096, FromContents = true },
+                (10, _, _) => current with { Name = "Windows 10", MinRamMb = 4096, FromContents = true },
+                (> 10, _, _) => current with { Name = "Windows 11", MinRamMb = 4096, FromContents = true },
+                _ => current
+            };
+        }
+        catch { return current; }
+    }
+
     private static string Prettify(string stem)
     {
         string t = Regex.Replace(stem, @"[-_.]+", " ").Trim();
