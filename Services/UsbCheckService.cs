@@ -6,6 +6,11 @@ public static class UsbCheckService
 {
     private const int BufSize = 1 << 20;
 
+    /// <summary>
+    /// Filesystem-level write/read spot check. This is NOT a full surface scan:
+    /// it writes a temp file and reads it back, which catches dying drives and
+    /// fake-size sticks but cannot remap hardware sectors like chkdsk /r.
+    /// </summary>
     public static void CheckBadBlocks(string usbLetter, int passes,
         Action<string> log, Action<double>? progress = null, CancellationToken ct = default)
     {
@@ -71,13 +76,19 @@ public static class UsbCheckService
         progress?.Invoke(100);
     }
 
+    private static readonly string[] CriticalFiles =
+    {
+        @"bootmgr", @"setup.exe", @"sources\boot.wim", @"sources\setup.exe",
+        @"efi\boot\bootx64.efi",
+    };
+
     public static void VerifyFileCopy(string srcRoot, string dstRoot,
         Action<string> log, CancellationToken ct = default)
     {
         srcRoot = srcRoot.TrimEnd('\\');
         dstRoot = dstRoot.TrimEnd('\\');
         var srcFiles = Directory.GetFiles(srcRoot, "*", SearchOption.AllDirectories);
-        int ok = 0, skipped = 0;
+        int ok = 0, skipped = 0, hashed = 0;
         foreach (var s in srcFiles)
         {
             ct.ThrowIfCancellationRequested();
@@ -98,9 +109,16 @@ public static class UsbCheckService
             long ls = new FileInfo(s).Length, ld = new FileInfo(d).Length;
             if (ls != ld)
                 throw new IOException($"Verify failed: size mismatch {rel} ({Fmt(ls)} vs {Fmt(ld)}).");
+            if (IsCritical(rel))
+            {
+                string hs = HashFile(s), hd = HashFile(d);
+                if (!hs.Equals(hd, StringComparison.OrdinalIgnoreCase))
+                    throw new IOException($"Verify failed: content mismatch {rel} (SHA256 differs).");
+                hashed++;
+            }
             ok++;
         }
-        log($"Verify OK: {ok} files match{(skipped > 0 ? $", {skipped} split-image skipped" : "")}.");
+        log($"Verify OK: {ok} files match ({hashed} critical hashed with SHA256{(skipped > 0 ? $", {skipped} split-image skipped" : "")}).");
     }
 
     public static void VerifyRaw(string isoPath, string deviceId,
@@ -164,6 +182,16 @@ public static class UsbCheckService
             return (write, read);
         }
         finally { try { File.Delete(f); } catch { } }
+    }
+
+    private static bool IsCritical(string rel) =>
+        CriticalFiles.Any(c => rel.Equals(c, StringComparison.OrdinalIgnoreCase));
+
+    private static string HashFile(string path)
+    {
+        using var sha = System.Security.Cryptography.SHA256.Create();
+        using var fs = File.Open(path, FileMode.Open, FileAccess.Read, FileShare.Read);
+        return Convert.ToHexString(sha.ComputeHash(fs));
     }
 
     private static int ReadFull(Stream s, byte[] buf, int need, CancellationToken ct)

@@ -1,4 +1,5 @@
 using System.Management;
+using System.Runtime.InteropServices;
 using WinMultiInstaller.Models;
 
 namespace WinMultiInstaller.Services;
@@ -25,7 +26,14 @@ public class HardwareService
 
         bool hasTpm = CheckTpm();
         bool hasUefi = CheckUefi();
-        return new HardwareInfo(cpu, ramMb, hasTpm, hasUefi, 0);
+        ulong free = 0;
+        try
+        {
+            string? sysRoot = Path.GetPathRoot(Environment.SystemDirectory);
+            if (sysRoot != null) free = (ulong)new DriveInfo(sysRoot).AvailableFreeSpace;
+        }
+        catch { }
+        return new HardwareInfo(cpu, ramMb, hasTpm, hasUefi, free);
     }
 
     private static ManagementObjectSearcher WithTimeout(string scope, string query, int seconds = 10)
@@ -40,21 +48,52 @@ public class HardwareService
         try
         {
             using var s = WithTimeout(
-                "root\\CIMV2\\Security\\MicrosoftTpm", "SELECT IsEnabled FROM Win32_Tpm", 8);
-            foreach (ManagementObject o in s.Get()) return true;
+                @"root\CIMV2\Security\MicrosoftTpm",
+                "SELECT IsEnabled_InitialValue, IsActivated_InitialValue, SpecVersion FROM Win32_Tpm", 8);
+            foreach (ManagementObject o in s.Get())
+            {
+                bool enabled = IsTruthy(o["IsEnabled_InitialValue"]);
+                bool activated = IsTruthy(o["IsActivated_InitialValue"]);
+                string spec = o["SpecVersion"]?.ToString() ?? "";
+                // TPM 2.0 reports SpecVersion like "2.0, 0, 1.16". Accept 2.x.
+                bool is2x = spec.Split(',')[0].Trim().StartsWith("2", StringComparison.Ordinal);
+                if (enabled && activated && is2x) return true;
+                // Fall back: any enabled TPM counts as present (caller warns about 1.2).
+                if (enabled && activated) return true;
+            }
         }
         catch { }
         return false;
     }
 
+    private static bool IsTruthy(object? v)
+    {
+        if (v == null) return false;
+        if (v is bool b) return b;
+        string s = v.ToString() ?? "";
+        return s.Equals("true", StringComparison.OrdinalIgnoreCase) || s == "1";
+    }
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern bool GetFirmwareType(ref uint firmwareType);
+
     private static bool CheckUefi()
     {
         try
         {
-            using var k = Microsoft.Win32.Registry.LocalMachine.OpenSubKey(
-                @"SYSTEM\CurrentControlSet\Control\PEFirmwareType");
-            return Environment.GetEnvironmentVariable("firmware_type") != "Legacy";
+            uint t = 0;
+            if (GetFirmwareType(ref t))
+                return t == 2; // FirmwareTypeUefi
         }
-        catch { return false; }
+        catch { }
+        try
+        {
+            // Fallback: SecureBoot UEFI variable presence implies UEFI boot.
+            using var k = Microsoft.Win32.Registry.LocalMachine.OpenSubKey(
+                @"SYSTEM\CurrentControlSet\Control\SecureBoot\State");
+            if (k?.GetValue("UEFISecureBootEnabled") != null) return true;
+        }
+        catch { }
+        return false;
     }
 }

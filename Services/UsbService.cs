@@ -13,6 +13,7 @@ public class UsbService
     private const int SplitChunkMb = 3800;
 
     public enum FileSystemMode { Fat32Split, NtfsDirect }
+    public enum PartitionStyle { Mbr, Gpt }
 
     public List<UsbDrive> GetUsbDrives()
     {
@@ -59,7 +60,7 @@ public class UsbService
     public void WriteImage(string isoPath, UsbDrive target, string arch, WindowsCustom custom,
         IProgress<string>? log = null, CancellationToken ct = default,
         FileSystemMode fsMode = FileSystemMode.Fat32Split, bool verify = false,
-        string? volumeLabel = null)
+        string? volumeLabel = null, PartitionStyle partStyle = PartitionStyle.Mbr)
     {
         void L(string m) => log?.Report(m);
         long lastEmit = 0;
@@ -88,8 +89,8 @@ public class UsbService
                     throw new IOException(
                         $"USB drive too small: {Fmt((long)target.SizeBytes)}, need {Fmt(needUsb)}.");
                 CheckUefiNtfsAsset(L);
-                L("Preparing USB (diskpart: clean, MBR, NTFS, active)...");
-                string usbLetterNtfs = PrepareUsb(disk, Emit, ct, "ntfs", volumeLabel ?? "MULTIWIN");
+                L($"Preparing USB (diskpart: clean, {partStyle}, NTFS, active)...");
+                string usbLetterNtfs = PrepareUsb(disk, Emit, ct, "ntfs", volumeLabel ?? "MULTIWIN", partStyle);
                 L($"USB ready as {usbLetterNtfs}");
                 ct.ThrowIfCancellationRequested();
                 int rcNtfs = Run("robocopy",
@@ -114,8 +115,8 @@ public class UsbService
             if (plan == CopyPlan.ConvertEsd)
                 RequireTempSpace(isoLetter, L);
 
-            L("Preparing USB (diskpart: clean, MBR, FAT32, active)...");
-            string usbLetter = PrepareUsb(disk, Emit, ct, "fat32", volumeLabel ?? "MULTIWIN");
+            L($"Preparing USB (diskpart: clean, {partStyle}, FAT32, active)...");
+            string usbLetter = PrepareUsb(disk, Emit, ct, "fat32", volumeLabel ?? "MULTIWIN", partStyle);
             L($"USB ready as {usbLetter}");
 
             ct.ThrowIfCancellationRequested();
@@ -148,7 +149,7 @@ public class UsbService
             throw new IOException(
                 $"USB drive too small: {Fmt((long)target.SizeBytes)}, image is {Fmt(total)}.");
 
-        string script = Path.Combine(Path.GetTempPath(), $"multiwin-clean-{disk}.txt");
+        string script = TempScriptPath("multiwin-clean");
         File.WriteAllText(script,
             $"select disk {disk}\nonline disk noerr\nattributes disk clear readonly noerr\nclean\nexit\n");
         try
@@ -281,7 +282,7 @@ public class UsbService
 
         string tmpDir = Path.Combine(Path.GetTempPath(), "Multi-Win");
         Directory.CreateDirectory(tmpDir);
-        string tmpWim = Path.Combine(tmpDir, tempTag + ".conv.wim");
+        string tmpWim = Path.Combine(tmpDir, tempTag + "-" + Path.GetRandomFileName() + ".conv.wim");
         try { if (File.Exists(tmpWim)) File.Delete(tmpWim); } catch { }
         try
         {
@@ -353,14 +354,18 @@ public class UsbService
         catch { }
     }
 
-    private static string PrepareUsb(int disk, Action<string> emit, CancellationToken ct, string fs = "fat32", string label = "MULTIWIN")
+    private static string PrepareUsb(int disk, Action<string> emit, CancellationToken ct, string fs = "fat32", string label = "MULTIWIN", PartitionStyle style = PartitionStyle.Mbr)
     {
         string fsLower = (fs ?? "fat32").ToLowerInvariant() == "ntfs" ? "ntfs" : "fat32";
         string vol = SanitizeLabel(label);
-        string script = Path.Combine(Path.GetTempPath(), $"multiwin-diskpart-{disk}.txt");
+        string script = TempScriptPath("multiwin-diskpart");
+        string convert = style == PartitionStyle.Gpt ? "convert gpt" : "convert mbr";
+        // GPT: no "active" flag (MBR-only concept); single data partition is enough
+        // for UEFI boot from FAT32. MBR keeps "active" for BIOS boot.
+        string active = style == PartitionStyle.Gpt ? "" : "active\n";
         File.WriteAllText(script,
-            $"select disk {disk}\nclean\nconvert mbr\ncreate partition primary\n" +
-            $"format fs={fsLower} quick label=\"{vol}\"\nactive\nassign\nexit\n");
+            $"select disk {disk}\nclean\n{convert}\ncreate partition primary\n" +
+            $"format fs={fsLower} quick label=\"{vol}\"\n{active}assign\nexit\n");
         try
         {
             var outLines = new List<string>();
@@ -385,8 +390,11 @@ public class UsbService
     private static string? QueryUsbLetter(int disk, CancellationToken ct)
     {
         string? found = null;
-        Run("powershell",
-            $"-NoProfile -NonInteractive -Command \"(Get-Partition -DiskNumber {disk} -ErrorAction SilentlyContinue | Where-Object DriveLetter | Select-Object -First 1).DriveLetter\"",
+        // Disk number is validated int; script itself is static. EncodedCommand
+        // avoids any quoting/injection issues with inline -Command strings.
+        string ps = "(Get-Partition -DiskNumber " + disk +
+            " -ErrorAction SilentlyContinue | Where-Object DriveLetter | Select-Object -First 1).DriveLetter";
+        RunEncodedPowerShell(ps,
             l => { var t = l.Trim(); if (t.Length == 1 && char.IsLetter(t[0])) found = t.ToUpperInvariant() + ":"; },
             ct);
         return found;
@@ -405,21 +413,38 @@ public class UsbService
     private static string MountIso(string isoPath, Action<string> emit, CancellationToken ct)
     {
         string? found = null;
-        string ps = $"Mount-DiskImage -ImagePath '{isoPath.Replace("'", "''")}' | Out-Null; " +
-                    $"(Get-DiskImage -ImagePath '{isoPath.Replace("'", "''")}' | Get-Volume).DriveLetter";
-        Run("powershell", $"-NoProfile -NonInteractive -Command \"{ps}\"",
-            l => { var t = l.Trim(); if (t.Length == 1 && char.IsLetter(t[0])) found = t.ToUpperInvariant() + ":"; else emit(l); },
-            ct);
+        // Script travels base64-encoded (-EncodedCommand), so cmd.exe quoting is a
+        // non-issue. The path itself is a single-quoted PowerShell literal where
+        // only ' needs escaping (doubled) — no interpolation, no injection.
+        string q = ToPsSingleQuoted(Path.GetFullPath(isoPath));
+        string b64 = EncodePowerShell(
+            $"Mount-DiskImage -ImagePath {q} | Out-Null; " +
+            $"(Get-DiskImage -ImagePath {q} | Get-Volume).DriveLetter");
+        using var p = StartProcess("powershell",
+            "-NoProfile -NonInteractive -EncodedCommand " + b64, out var readOut, out var readErr,
+            l => { var t = l.Trim(); if (t.Length == 1 && char.IsLetter(t[0])) found = t.ToUpperInvariant() + ":"; else emit(l); });
+        WaitForExitCancellable(p, readOut, readErr, ct);
         return found ?? throw new IOException("Could not mount ISO / get its drive letter.");
     }
 
     private static void DismountIso(string isoPath, Action<string> L)
     {
-        Run("powershell",
-            $"-NoProfile -NonInteractive -Command \"Dismount-DiskImage -ImagePath '{isoPath.Replace("'", "''")}'\"",
-            null, CancellationToken.None);
+        try
+        {
+            string q = ToPsSingleQuoted(Path.GetFullPath(isoPath));
+            string b64 = EncodePowerShell($"Dismount-DiskImage -ImagePath {q}");
+            using var p = StartProcess("powershell",
+                "-NoProfile -NonInteractive -EncodedCommand " + b64, out var ro, out var re, null);
+            WaitForExitCancellable(p, ro, re, CancellationToken.None);
+        }
+        catch (Exception ex) { L("Warning: could not dismount ISO: " + ex.Message); return; }
         L("ISO dismounted.");
     }
+
+    private static string ToPsSingleQuoted(string s) => "'" + s.Replace("'", "''") + "'";
+
+    private static string EncodePowerShell(string script) =>
+        Convert.ToBase64String(Encoding.Unicode.GetBytes(script));
 
     internal static string MountIsoImage(string isoPath) =>
         MountIso(isoPath, _ => { }, CancellationToken.None);
@@ -436,11 +461,19 @@ public class UsbService
 
     private static void AssertUsbDisk(int disk, string deviceId)
     {
-        string wmiId = deviceId.Replace("\\", "\\\\");
+        // Never concatenate deviceId into WQL: validate the number first, then
+        // query by integer Index. Anything that doesn't parse as PHYSICALDRIVEn
+        // (or whose Index doesn't match) aborts.
+        int parsed = ParseDiskNumber(deviceId);
+        if (parsed != disk)
+            throw new IOException($"Disk number mismatch ({disk} vs {parsed}), aborting.");
         using var s = new ManagementObjectSearcher(
-            $"SELECT InterfaceType, Model FROM Win32_DiskDrive WHERE DeviceID='{wmiId}'");
+            $"SELECT InterfaceType, Model, Index FROM Win32_DiskDrive WHERE Index={disk}");
         foreach (ManagementObject o in s.Get())
         {
+            int idx;
+            try { idx = Convert.ToInt32(o["Index"]); } catch { continue; }
+            if (idx != disk) continue;
             string iface = o["InterfaceType"]?.ToString() ?? "";
             if (!iface.Contains("USB", StringComparison.OrdinalIgnoreCase))
                 throw new IOException(
@@ -450,7 +483,11 @@ public class UsbService
         throw new IOException($"Disk {disk} not found, aborting.");
     }
 
-    private static int Run(string exe, string args, Action<string>? onLine, CancellationToken ct)
+    private static string TempScriptPath(string prefix) =>
+        Path.Combine(Path.GetTempPath(), prefix + "-" + Path.GetRandomFileName() + ".txt");
+
+    private static Process StartProcess(string exe, string args,
+        out Task readOut, out Task readErr, Action<string>? onLine)
     {
         var psi = new ProcessStartInfo(exe, args)
         {
@@ -461,14 +498,52 @@ public class UsbService
             StandardOutputEncoding = Encoding.UTF8,
             StandardErrorEncoding = Encoding.UTF8,
         };
-        using var p = new Process { StartInfo = psi };
+        var p = new Process { StartInfo = psi, EnableRaisingEvents = true };
         p.Start();
-        var readOut = Task.Run(() => Pump(p.StandardOutput, onLine));
-        var readErr = Task.Run(() => Pump(p.StandardError, onLine));
-        p.WaitForExit();
-        Task.WaitAll(readOut, readErr);
-        ct.ThrowIfCancellationRequested();
-        return p.ExitCode;
+        readOut = Task.Run(() => Pump(p.StandardOutput, onLine));
+        readErr = Task.Run(() => Pump(p.StandardError, onLine));
+        return p;
+    }
+
+    private static int WaitForExitCancellable(Process p, Task readOut, Task readErr, CancellationToken ct)
+    {
+        try
+        {
+            while (!p.WaitForExit(250))
+                ct.ThrowIfCancellationRequested();
+            Task.WaitAll(readOut, readErr);
+            ct.ThrowIfCancellationRequested();
+            return p.ExitCode;
+        }
+        catch
+        {
+            try
+            {
+                if (!p.HasExited)
+                {
+                    p.Kill(entireProcessTree: true);
+                    p.WaitForExit(5000);
+                }
+            }
+            catch { }
+            try { Task.WaitAll(readOut, readErr, 2000); } catch { }
+            throw;
+        }
+    }
+
+    internal static void RunEncodedPowerShell(string script, Action<string>? onLine, CancellationToken ct)
+    {
+        string b64 = EncodePowerShell(script);
+        using var p = StartProcess("powershell",
+            "-NoProfile -NonInteractive -EncodedCommand " + b64, out var ro, out var re, onLine);
+        int rc = WaitForExitCancellable(p, ro, re, ct);
+        if (rc != 0) onLine?.Invoke($"powershell exit code: {rc}");
+    }
+
+    private static int Run(string exe, string args, Action<string>? onLine, CancellationToken ct)
+    {
+        using var p = StartProcess(exe, args, out var readOut, out var readErr, onLine);
+        return WaitForExitCancellable(p, readOut, readErr, ct);
     }
 
     private static void Pump(StreamReader r, Action<string>? onLine)

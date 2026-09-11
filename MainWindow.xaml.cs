@@ -15,8 +15,10 @@ public partial class MainWindow : Window
 
     private readonly CatalogService _catalog = new();
     private readonly UsbService _usb = new();
+    private readonly HddInstallService _hdd = new();
     private readonly HardwareService _hw = new();
     private readonly ImageService _img = new();
+    private bool IsHddMode => TargetBox?.SelectedIndex == 1;
     private HardwareInfo _hwInfo = new("?", 0, false, false, 0);
     private readonly ObservableCollection<WindowsImage> _images = new();
     private int _step;
@@ -104,7 +106,26 @@ public partial class MainWindow : Window
             ImageDesc.Text = $"{img.Name} · {img.Arch} · {size} · min RAM {img.MinRamMb} MB";
             var warn = _hwInfo.CheckCompatibility(img);
             if (warn != null) WarnText.Text = "⚠ " + warn;
-            if (UsbBox.SelectedItem is UsbDrive usb && usb.SizeBytes > 0)
+            if (IsHddMode)
+            {
+                if (img.OsFamily != "Windows" && img.OsFamily != "Unknown")
+                    WarnText.Text += (WarnText.Text.Length > 0 ? "\n" : "") +
+                        "⚠ HDD mode supports Windows Setup images only — Linux still needs a USB stick.";
+                if (HddBox?.SelectedItem is HddInstallService.HddTarget hdd && hdd.FreeBytes > 0)
+                {
+                    long need = img.SizeBytes > 0 ? img.SizeBytes :
+                        (!string.IsNullOrEmpty(img.LocalPath) && File.Exists(img.LocalPath)
+                            ? new FileInfo(img.LocalPath).Length : 0);
+                    long needHdd = need + 512L * 1024 * 1024;
+                    if (need > 0 && hdd.FreeBytes < needHdd)
+                        WarnText.Text += (WarnText.Text.Length > 0 ? "\n" : "") +
+                            $"⚠ Not enough space on {hdd.Root} (free {FmtBytes(hdd.FreeBytes)}, need {FmtBytes(needHdd)}).";
+                }
+                var st = _hdd.GetState();
+                if (st.Installed)
+                    WarnText.Text += (WarnText.Text.Length > 0 ? "\n" : "") + $"⚠ HDD setup already present at {st.SetupDir}. Remove it first.";
+            }
+            else if (UsbBox.SelectedItem is UsbDrive usb && usb.SizeBytes > 0)
             {
                 long need = img.SizeBytes > 0 ? img.SizeBytes :
                     (!string.IsNullOrEmpty(img.LocalPath) && File.Exists(img.LocalPath)
@@ -117,7 +138,23 @@ public partial class MainWindow : Window
             if (!BypassCheck.IsEnabled) BypassCheck.IsChecked = false;
             bool isWin = img.OsFamily == "Windows";
             WinTweaks.Visibility = isWin ? Visibility.Visible : Visibility.Collapsed;
+            if (HddBox != null) RefreshHddTargetsForWarning(img);
         }
+    }
+
+    private void RefreshHddTargetsForWarning(WindowsImage img)
+    {
+        if (!IsHddMode) return;
+        try
+        {
+            long need = img.SizeBytes > 0 ? img.SizeBytes :
+                (!string.IsNullOrEmpty(img.LocalPath) && File.Exists(img.LocalPath)
+                    ? new FileInfo(img.LocalPath).Length : 0);
+            var targets = _hdd.GetTargets(need);
+            HddBox.ItemsSource = targets;
+            if (HddBox.SelectedItem == null && HddBox.Items.Count > 0) HddBox.SelectedIndex = 0;
+        }
+        catch { }
     }
 
     private void PaintBars()
@@ -139,30 +176,50 @@ public partial class MainWindow : Window
         BackBtn.IsEnabled = _step > 0;
         NextBtn.Visibility = _step < 2 ? Visibility.Visible : Visibility.Collapsed;
         StartBtn.Visibility = _step == 2 ? Visibility.Visible : Visibility.Collapsed;
+        StartBtn.Content = IsHddMode ? "Install to this PC" : "Flash";
         PaintBars();
-        if (_step == 1 && !_busy) _ = RefreshUsbAsync();
+        if (_step == 1 && !_busy)
+        {
+            _ = RefreshUsbAsync();
+            if (IsHddMode) RefreshHddTargets();
+        }
         if (_step == 2) UpdateSummary();
     }
 
     private void UpdateSummary()
     {
         var img = ImageBox.SelectedItem as WindowsImage;
-        var usb = UsbBox.SelectedItem as UsbDrive;
-        bool ntfs = FsBox.SelectedIndex == 1;
-        string fs = ntfs ? "NTFS (no split)" : "FAT32 (split)";
         string isoSize = img == null ? "—" :
             img.SizeBytes > 0 ? FmtBytes(img.SizeBytes) :
             (!string.IsNullOrEmpty(img.LocalPath) && File.Exists(img.LocalPath)
                 ? FmtBytes(new FileInfo(img.LocalPath).Length) : "size unknown");
         var opts = new List<string>();
-        if (VerifyCheck.IsChecked == true) opts.Add("verify");
-        if (BadBlocksCheck.IsChecked == true) opts.Add("bad-blocks check");
+        if (!IsHddMode && VerifyCheck.IsChecked == true) opts.Add("verify");
+        if (!IsHddMode && BadBlocksCheck.IsChecked == true) opts.Add("filesystem check");
         if (BypassCheck.IsChecked == true) opts.Add("TPM bypass");
+        string targetLine;
+        string fsLine = "";
+        if (IsHddMode)
+        {
+            var hdd = HddBox?.SelectedItem as HddInstallService.HddTarget;
+            targetLine = $"Target: this PC ({hdd?.Root ?? "—"} \\{HddInstallService.SetupDirName}, boot once)";
+            fsLine = "";
+        }
+        else
+        {
+            var usb = UsbBox.SelectedItem as UsbDrive;
+            bool ntfs = FsBox.SelectedIndex == 1;
+            bool gpt = PartBox.SelectedIndex == 1;
+            string fs = ntfs ? "NTFS (no split)" : "FAT32 (split)";
+            string part = gpt ? "GPT" : "MBR";
+            targetLine = $"USB: {usb?.Display ?? "—"}";
+            fsLine = (img?.OsFamily == "Windows" ? $"\n{part} · {fs} · label {UsbService.SanitizeLabel(LabelBox.Text)}" : "");
+        }
         SummaryText.Text = $"Image: {img?.Name ?? "—"} ({isoSize})" +
-            $"\nUSB: {usb?.Display ?? "—"}" +
+            $"\n{targetLine}" +
             (img?.LocalPath != null ? $"\nFile: {img.LocalPath}" : "") +
             (!string.IsNullOrWhiteSpace(img?.DownloadUrl) ? $"\nURL: {img.DownloadUrl}" : "") +
-            (img?.OsFamily == "Windows" ? $"\nFS: {fs} · label {UsbService.SanitizeLabel(LabelBox.Text)}" : "") +
+            fsLine +
             (opts.Count > 0 ? $"\nOptions: {string.Join(", ", opts)}" : "");
     }
 
@@ -179,6 +236,63 @@ public partial class MainWindow : Window
         catch { CacheText.Text = ""; }
     }
 
+    private void FidoBtn_Click(object sender, RoutedEventArgs e)
+    {
+        if (_busy) return;
+        string msg = CatalogService.LaunchMicrosoftFlow(Log);
+        ImageDesc.Text = msg;
+        Log(msg);
+    }
+
+    private void TargetBox_Changed(object sender, RoutedEventArgs e)
+    {
+        if (UsbOptions == null || HddPanel == null) return;
+        bool hdd = IsHddMode;
+        UsbOptions.Visibility = hdd ? Visibility.Collapsed : Visibility.Visible;
+        HddPanel.Visibility = hdd ? Visibility.Visible : Visibility.Collapsed;
+        if (StartBtn != null) StartBtn.Content = hdd ? "Install to this PC" : "Flash";
+        if (hdd) RefreshHddTargets();
+        UpdateWarning();
+        if (_step == 2) UpdateSummary();
+    }
+
+    private void RefreshHddTargets(long needBytes = 0)
+    {
+        try
+        {
+            var targets = _hdd.GetTargets(needBytes);
+            HddBox.ItemsSource = targets;
+            if (HddBox.SelectedItem == null && HddBox.Items.Count > 0)
+                HddBox.SelectedIndex = 0;
+            var st = _hdd.GetState();
+            HddHint.Text = st.Installed
+                ? $"Previous HDD setup found at {st.SetupDir}. Remove it before creating a new one."
+                : "Setup files are copied to \\MULTIWIN-SETUP and the PC boots into Setup once (default boot entry untouched). Linux images still need a USB stick.";
+        }
+        catch (Exception ex)
+        {
+            HddHint.Text = "Could not list internal drives: " + ex.GetBaseException().Message;
+        }
+    }
+
+    private async void RemoveHdd_Click(object sender, RoutedEventArgs e)
+    {
+        if (_busy) return;
+        var confirm = MessageBox.Show(
+            "Delete the HDD setup folder and its boot entry?",
+            "Multi-Win — remove HDD setup",
+            MessageBoxButton.YesNo, MessageBoxImage.Question, MessageBoxResult.No);
+        if (confirm != MessageBoxResult.Yes) return;
+        try
+        {
+            await Task.Run(() => _hdd.RemoveHddSetup(Log));
+            RefreshHddTargets();
+        }
+        catch (Exception ex)
+        {
+            Log("Remove failed: " + ex.GetBaseException().Message);
+        }
+    }
     private void SourceBox_Changed(object sender, RoutedEventArgs e)
     {
         if (BrowsePanel == null || UrlPanel == null) return;
@@ -398,8 +512,21 @@ public partial class MainWindow : Window
         if (_busy) return;
         if (_step == 0 && ImageBox.SelectedItem is null)
         { ImageDesc.Text = "Pick an image first"; return; }
-        if (_step == 1 && UsbBox.SelectedItem is null)
-        { WarnText.Text = "Pick a USB drive first"; return; }
+        if (_step == 1)
+        {
+            if (IsHddMode)
+            {
+                if (ImageBox.SelectedItem is WindowsImage hi && hi.OsFamily != "Windows" && hi.OsFamily != "Unknown")
+                { WarnText.Text = "HDD mode supports Windows Setup images only. Switch to USB for this image."; return; }
+                if (HddBox.SelectedItem is null)
+                { WarnText.Text = "Pick an internal drive"; return; }
+                var st = _hdd.GetState();
+                if (st.Installed)
+                { WarnText.Text = $"HDD setup already present at {st.SetupDir}. Remove it first."; return; }
+            }
+            else if (UsbBox.SelectedItem is null)
+            { WarnText.Text = "Pick a USB drive first"; return; }
+        }
         ShowStep(_step + 1);
     }
 
@@ -416,6 +543,8 @@ public partial class MainWindow : Window
     {
         var line = $"[{DateTime.Now:HH:mm:ss}] {msg}";
         LogBox.Items.Add(line);
+        while (LogBox.Items.Count > 2000)
+            LogBox.Items.RemoveAt(0);
         LogBox.ScrollIntoView(LogBox.Items[^1]);
     }
 
@@ -434,22 +563,49 @@ public partial class MainWindow : Window
     private async void Start_Click(object sender, RoutedEventArgs e)
     {
         if (_busy) return;
-        if (ImageBox.SelectedItem is not WindowsImage img)
+        if (ImageBox.SelectedItem is not WindowsImage img0)
         { StatusText.Text = "Pick an image"; return; }
-        if (UsbBox.SelectedItem is not UsbDrive usb)
+        bool hddMode = IsHddMode;
+        UsbDrive? usb = UsbBox.SelectedItem as UsbDrive;
+        HddInstallService.HddTarget? hddTarget = HddBox?.SelectedItem as HddInstallService.HddTarget;
+        if (hddMode)
+        {
+            if (img0.OsFamily != "Windows" && img0.OsFamily != "Unknown")
+            { StatusText.Text = "HDD mode supports Windows images only"; Log("HDD mode supports Windows Setup images only — use USB for this image."); return; }
+            if (hddTarget is null)
+            { StatusText.Text = "Pick an internal drive"; return; }
+            var st0 = _hdd.GetState();
+            if (st0.Installed)
+            { StatusText.Text = $"HDD setup already present at {st0.SetupDir}"; Log($"HDD setup already present at {st0.SetupDir}. Remove it first."); return; }
+        }
+        else if (usb is null)
         { StatusText.Text = "Pick a USB drive"; return; }
 
         bool ntfsMode = FsBox.SelectedIndex == 1;
         string label = UsbService.SanitizeLabel(LabelBox.Text);
-        var confirm = MessageBox.Show(
-            $"Drive \"{usb.Model}\" will be FORMATTED and all data on it will be erased.\n\n" +
-            $"Image: {img.Name}\nUSB: {usb.Display}\n" +
-            (img.OsFamily == "Windows"
-                ? $"Format: {(ntfsMode ? "NTFS (no split)" : "FAT32 (split)")} · label {label}\n"
-                : "Mode: raw (dd-style) write\n") +
-            "\nContinue?",
-            "Multi-Win — confirm flash",
-            MessageBoxButton.YesNo, MessageBoxImage.Warning, MessageBoxResult.No);
+        MessageBoxResult confirm;
+        if (hddMode)
+        {
+            confirm = MessageBox.Show(
+                $"Setup files will be copied to {hddTarget!.Root}\\{HddInstallService.SetupDirName} " +
+                $"and the PC will boot into Setup ONCE (default boot entry untouched).\n\n" +
+                $"Image: {img0.Name}\nDrive: {hddTarget!.Root} (free {FmtBytes(hddTarget!.FreeBytes)})\n\n" +
+                "After Setup finishes, the folder and its boot entry are removed.\nContinue?",
+                "Multi-Win — confirm HDD install",
+                MessageBoxButton.YesNo, MessageBoxImage.Question, MessageBoxResult.No);
+        }
+        else
+        {
+            confirm = MessageBox.Show(
+                $"Drive \"{usb!.Model}\" will be FORMATTED and all data on it will be erased.\n\n" +
+                $"Image: {img0.Name}\nUSB: {usb!.Display}\n" +
+                (img0.OsFamily == "Windows"
+                    ? $"Format: {(ntfsMode ? "NTFS (no split)" : "FAT32 (split)")} · label {label}\n"
+                    : "Mode: raw (dd-style) write\n") +
+                "\nContinue?",
+                "Multi-Win — confirm flash",
+                MessageBoxButton.YesNo, MessageBoxImage.Warning, MessageBoxResult.No);
+        }
         if (confirm != MessageBoxResult.Yes)
         { StatusText.Text = "Cancelled"; Log("Cancelled by user."); return; }
 
@@ -465,8 +621,12 @@ public partial class MainWindow : Window
         string isoPath = "";
         try
         {
-            Log($"Start: {img.Name} -> {usb.Model}" +
-                (BypassCheck.IsChecked == true ? " (TPM bypass ON)" : ""));
+            WindowsImage img = img0;
+            Log(hddMode
+                ? $"Start HDD install: {img.Name} -> {hddTarget!.Root}\\{HddInstallService.SetupDirName}" +
+                  (BypassCheck.IsChecked == true ? " (TPM bypass ON)" : "")
+                : $"Start: {img.Name} -> {usb!.Model}" +
+                  (BypassCheck.IsChecked == true ? " (TPM bypass ON)" : ""));
             var dir = Path.Combine(Path.GetTempPath(), "Multi-Win");
             Directory.CreateDirectory(dir);
             bool isLocal = !string.IsNullOrEmpty(img.LocalPath);
@@ -521,31 +681,6 @@ public partial class MainWindow : Window
                 Log("Hash OK.");
             }
 
-            StatusText.Text = "Flashing USB...";
-            SpeedText.Text = "";
-            Progress.IsIndeterminate = true;
-            if (BadBlocksCheck.IsChecked == true)
-            {
-                string? letter = await Task.Run(() => _usb.TryGetVolumeLetter(usb));
-                if (letter == null)
-                {
-                    Log("Bad-blocks check skipped: no volume letter (re-plug the drive).");
-                }
-                else
-                {
-                    Log($"Bad-blocks check on {letter} (1 pass, ~1 min)...");
-                    StatusText.Text = "Checking for bad blocks...";
-                    var bp = new Progress<double>(v =>
-                    {
-                        Progress.IsIndeterminate = false;
-                        Progress.Value = v;
-                        StatusText.Text = $"Bad-blocks check: {v:F0}%";
-                    });
-                    await Task.Run(() => UsbCheckService.CheckBadBlocks(letter, 1, Log, v => ((IProgress<double>)bp).Report(v), ct));
-                    Progress.IsIndeterminate = true;
-                    Log("Bad-blocks check passed.");
-                }
-            }
             string family = img.OsFamily;
             if (!isLocal)
             {
@@ -590,6 +725,56 @@ public partial class MainWindow : Window
                 AppraiserCheck.IsChecked == true,
                 LocaleCheck.IsChecked == true);
             var flashLog = new Progress<string>(m => Log(m));
+
+            if (hddMode)
+            {
+                if (family != "Windows")
+                {
+                    StatusText.Text = "HDD mode supports Windows images only";
+                    Log("ERROR: this image has no Windows Setup (sources\\boot.wim) — use USB mode.");
+                    return;
+                }
+                StatusText.Text = "Copying Setup files...";
+                SpeedText.Text = "";
+                Progress.IsIndeterminate = true;
+                string root = hddTarget!.Root;
+                bool uefi = _hwInfo.HasUefi;
+                await Task.Run(() => _hdd.Install(isoPath, arch, custom, root, uefi, flashLog, ct));
+                Progress.IsIndeterminate = false;
+                Progress.Value = 100;
+                StatusText.Text = "Done — reboot to start Setup";
+                Log($"Done. Reboot to start Windows Setup from {root}\\{HddInstallService.SetupDirName}.");
+                Log("Default boot entry untouched — the PC boots into Setup once, then back to your system.");
+                RefreshHddTargets();
+                RefreshCacheText();
+                return;
+            }
+
+            StatusText.Text = "Flashing USB...";
+            SpeedText.Text = "";
+            Progress.IsIndeterminate = true;
+            if (BadBlocksCheck.IsChecked == true)
+            {
+                string? letter = await Task.Run(() => _usb.TryGetVolumeLetter(usb!));
+                if (letter == null)
+                {
+                    Log("Bad-blocks check skipped: no volume letter (re-plug the drive).");
+                }
+                else
+                {
+                    Log($"Bad-blocks check on {letter} (1 pass, ~1 min)...");
+                    StatusText.Text = "Checking for bad blocks...";
+                    var bp = new Progress<double>(v =>
+                    {
+                        Progress.IsIndeterminate = false;
+                        Progress.Value = v;
+                        StatusText.Text = $"Bad-blocks check: {v:F0}%";
+                    });
+                    await Task.Run(() => UsbCheckService.CheckBadBlocks(letter, 1, Log, v => ((IProgress<double>)bp).Report(v), ct));
+                    Progress.IsIndeterminate = true;
+                    Log("Bad-blocks check passed.");
+                }
+            }
             bool verify = VerifyCheck.IsChecked == true;
             var fsMode = FsBox.SelectedIndex == 1
                 ? UsbService.FileSystemMode.NtfsDirect
@@ -603,13 +788,13 @@ public partial class MainWindow : Window
                     Progress.Value = v;
                     StatusText.Text = $"Flashing: {v:F1}%";
                 });
-                await Task.Run(() => _usb.WriteRaw(isoPath, usb, flashLog, fp, ct, verify));
+                await Task.Run(() => _usb.WriteRaw(isoPath, usb!, flashLog, fp, ct, verify));
             }
             else
             {
-                Log($"Formatting {usb.DeviceId} ({usb.Model}, {usb.PartitionStyle}, " +
+                Log($"Formatting {usb!.DeviceId} ({usb!.Model}, {usb!.PartitionStyle}, " +
                     (fsMode == UsbService.FileSystemMode.NtfsDirect ? "NTFS direct" : "FAT32 split") + ")...");
-                await Task.Run(() => _usb.WriteImage(isoPath, usb, arch, custom, flashLog, ct, fsMode, verify, label));
+                await Task.Run(() => _usb.WriteImage(isoPath, usb!, arch, custom, flashLog, ct, fsMode, verify, label));
             }
             Progress.IsIndeterminate = false;
             Progress.Value = 100;

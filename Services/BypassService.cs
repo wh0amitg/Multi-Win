@@ -14,6 +14,10 @@ public static class BypassService
     {
         string warch = arch == "x86" ? "x86" : arch == "arm64" ? "arm64" : "amd64";
         string user = SanitizeUser(c.Username);
+        string userXml = System.Security.SecurityElement.Escape(user) ?? "";
+        string tzXml;
+        try { tzXml = System.Security.SecurityElement.Escape(TimeZoneInfo.Local.Id) ?? ""; }
+        catch { tzXml = ""; }
         var sb = new StringBuilder();
         sb.AppendLine("<?xml version=\"1.0\" encoding=\"utf-8\"?>");
         sb.AppendLine("<unattend xmlns=\"urn:schemas-microsoft-com:unattend\">");
@@ -62,15 +66,15 @@ public static class BypassService
             sb.AppendLine($"    <component name=\"Microsoft-Windows-Shell-Setup\" processorArchitecture=\"{warch}\" language=\"neutral\" {Ns} publicKeyToken=\"31bf3856ad364e35\" versionScope=\"nonSxS\">");
             if (c.SkipPrivacy)
                 sb.AppendLine("      <OOBE><HideEULAPage>true</HideEULAPage><HideOEMRegistrationScreen>true</HideOEMRegistrationScreen><HideOnlineAccountScreens>true</HideOnlineAccountScreens><HideWirelessSetupInOOBE>true</HideWirelessSetupInOOBE><ProtectYourPC>3</ProtectYourPC></OOBE>");
-            if (c.HostLocale)
+            if (c.HostLocale && tzXml.Length > 0)
             {
-                try { sb.AppendLine($"      <TimeZone>{TimeZoneInfo.Local.Id}</TimeZone>"); } catch { }
+                sb.AppendLine($"      <TimeZone>{tzXml}</TimeZone>");
             }
             if (user.Length > 0)
             {
                 const string blank = "UABhAHMAcwB3AG8AcgBkAA==";
-                sb.AppendLine($"      <UserAccounts><LocalAccounts><LocalAccount wcm:action=\"add\"><Password><Value>{blank}</Value><PlainText>false</PlainText></Password><DisplayName>{user}</DisplayName><Group>Administrators</Group><Name>{user}</Name></LocalAccount></LocalAccounts></UserAccounts>");
-                sb.AppendLine($"      <AutoLogon><Password><Value>{blank}</Value><PlainText>false</PlainText></Password><Enabled>true</Enabled><LogonCount>1</LogonCount><Username>{user}</Username></AutoLogon>");
+                sb.AppendLine($"      <UserAccounts><LocalAccounts><LocalAccount wcm:action=\"add\"><Password><Value>{blank}</Value><PlainText>false</PlainText></Password><DisplayName>{userXml}</DisplayName><Group>Administrators</Group><Name>{userXml}</Name></LocalAccount></LocalAccounts></UserAccounts>");
+                sb.AppendLine($"      <AutoLogon><Password><Value>{blank}</Value><PlainText>false</PlainText></Password><Enabled>true</Enabled><LogonCount>1</LogonCount><Username>{userXml}</Username></AutoLogon>");
             }
             sb.AppendLine("    </component>");
             sb.AppendLine("  </settings>");
