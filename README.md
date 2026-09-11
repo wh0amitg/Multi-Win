@@ -15,7 +15,6 @@ pick an OS from the list (or throw in your own .iso), pick a USB stick, hit Flas
 - bad-blocks surface check before flash + file/byte verify after flash (optional)
 - usb speed benchmark, ISO cache manager (`%TEMP%\Multi-Win`), save-log button
 - image source switch (built-in list / local file / direct URL), custom volume label, early "USB too small" warning, auto-refresh of USB list, detailed summary + confirm dialog
-- one-click catalog update from URL + Microsoft retail flow (drop `Assets/Fido.ps1` from pbatard/Fido, or browser fallback)
 
 ## usage
 
@@ -43,7 +42,7 @@ dotnet publish -c Release -p:PublishProfile=win-x64-selfcontained
 
 output lands in `bin\publish\win-x64\`. keep the `Data` and `Assets` folders next to the exe, it reads the iso catalog and logos from there.
 
-want your own logos in the OS list? drop pngs into `Assets/` — `windows.png`, `linux.png`. app icon is `Assets/app.ico`, regenerate it from your png with `Assets/make-icon.ps1`.
+want your own logos in the OS list? drop pngs into `Assets/` — `windows.png`, `linux.png`. app icon is `Assets/app.ico`.
 
 ## notes / disclaimer
 
