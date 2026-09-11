@@ -43,7 +43,7 @@ dotnet publish -c Release -p:PublishProfile=win-x64-selfcontained
 
 output lands in `bin\publish\win-x64\`. keep the `Data` and `Assets` folders next to the exe, it reads the iso catalog and logos from there.
 
-want your own logos in the OS list? drop pngs into `Assets/` — `windows.png`, `kali.png`, `linux.png`, `generic.png`. app icon is `Assets/app.ico`, regenerate it from your png with `Assets/make-icon.ps1`.
+want your own logos in the OS list? drop pngs into `Assets/` — `windows.png`, `linux.png`. app icon is `Assets/app.ico`, regenerate it from your png with `Assets/make-icon.ps1`.
 
 ## notes / disclaimer
 
