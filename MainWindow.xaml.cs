@@ -1,7 +1,10 @@
 ﻿using System.Collections.ObjectModel;
+using System.ComponentModel;
 using System.IO;
 using System.Windows;
+using System.Windows.Data;
 using System.Windows.Media;
+using System.Windows.Media.Animation;
 using System.Windows.Media.Imaging;
 using WinMultiInstaller.Models;
 using WinMultiInstaller.Services;
@@ -21,14 +24,44 @@ public partial class MainWindow : Window
     private bool IsHddMode => TargetBox?.SelectedIndex == 1;
     private HardwareInfo _hwInfo = new("?", 0, false, false, 0);
     private readonly ObservableCollection<WindowsImage> _images = new();
+    private readonly ObservableCollection<ImageGroup> _vendorGroups = new();
+    private WindowsImage? _selectedImage;
     private int _step;
+
+    public sealed class ImageCardItem : INotifyPropertyChanged
+    {
+        public WindowsImage Image { get; }
+        private bool _isSelected;
+        public bool IsSelected
+        {
+            get => _isSelected;
+            set
+            {
+                if (_isSelected != value)
+                {
+                    _isSelected = value;
+                    PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(IsSelected)));
+                }
+            }
+        }
+        public ImageCardItem(WindowsImage image) => Image = image;
+        public event PropertyChangedEventHandler? PropertyChanged;
+    }
+
+    public sealed class ImageGroup
+    {
+        public string Vendor { get; }
+        public ObservableCollection<ImageCardItem> Items { get; } = new();
+        public ImageGroup(string vendor) => Vendor = vendor;
+    }
 
     public MainWindow()
     {
         InitializeComponent();
+        ImageGroupsList.ItemsSource = _vendorGroups;
+        PaintImagePopup();
         TrySetAppLogo();
         Loaded += async (_, _) => await InitAsync();
-        ImageBox.SelectionChanged += (_, _) => UpdateWarning();
         UsbBox.SelectionChanged += (_, _) => UpdateWarning();
     }
 
@@ -63,8 +96,8 @@ public partial class MainWindow : Window
             HwText.Text = $"{_hwInfo.CpuName} · RAM {_hwInfo.RamMb} MB · TPM: {(_hwInfo.HasTpm ? "yes" : "no")}";
             _images.Clear();
             foreach (var i in _catalog.Load()) _images.Add(i);
-            ImageBox.ItemsSource = _images;
-            if (ImageBox.Items.Count > 0) ImageBox.SelectedIndex = 0;
+            RefreshVendorGroups();
+            if (_images.Count > 0) SelectImage(_images[0]);
             var drives = await Task.Run(() => _usb.GetUsbDrives());
             UsbBox.ItemsSource = drives;
             RefreshCacheText();
@@ -93,12 +126,141 @@ public partial class MainWindow : Window
         finally { UsbBox.IsEnabled = true; }
     }
 
+    private void RefreshVendorGroups()
+    {
+        _vendorGroups.Clear();
+        var groups = _images
+            .GroupBy(i => i.VendorDisplay)
+            .OrderBy(g => g.Key == "Microsoft" ? 0 : g.Key == "Linux" ? 1 : 2)
+            .ThenBy(g => g.Key);
+        foreach (var g in groups)
+        {
+            var group = new ImageGroup(g.Key);
+            foreach (var img in g.OrderBy(x => x.Name))
+                group.Items.Add(new ImageCardItem(img) { IsSelected = img == _selectedImage });
+            _vendorGroups.Add(group);
+        }
+    }
+
+    private void SelectImage(WindowsImage? img)
+    {
+        _selectedImage = img;
+        RenderSelectedCard();
+        RefreshVendorGroups();
+        UpdateWarning();
+    }
+
+    private void RenderSelectedCard()
+    {
+        if (DropSelectedName == null) return;
+        if (_selectedImage is null)
+        {
+            DropSelectedName.Text = "Pick an image";
+            DropSelectedArch.Text = "";
+            DropWinIcon.Visibility = Visibility.Collapsed;
+            DropLinIcon.Visibility = Visibility.Collapsed;
+            DropGenIcon.Visibility = Visibility.Visible;
+            DropSelectedIcon.Source = null;
+            return;
+        }
+        DropSelectedName.Text = _selectedImage.Name;
+        DropSelectedArch.Text = _selectedImage.Arch;
+        DropWinIcon.Visibility = _selectedImage.OsFamily == "Windows" ? Visibility.Visible : Visibility.Collapsed;
+        DropLinIcon.Visibility = _selectedImage.OsFamily == "Linux" ? Visibility.Visible : Visibility.Collapsed;
+        DropGenIcon.Visibility = _selectedImage.OsFamily != "Windows" && _selectedImage.OsFamily != "Linux"
+            ? Visibility.Visible : Visibility.Collapsed;
+        try
+        {
+            DropSelectedIcon.Source = _selectedImage.IconPath is string p && File.Exists(p)
+                ? new BitmapImage(new Uri(p)) : null;
+        }
+        catch { DropSelectedIcon.Source = null; }
+    }
+
+    private void ImageDropToggle_Click(object sender, RoutedEventArgs e)
+    {
+        PaintImagePopup();
+        ImageDropPopup.IsOpen = ImageDropToggle.IsChecked == true;
+    }
+
+
+
+    private void PaintImagePopup()
+    {
+        if (ImageDropBorder == null) return;
+        bool dark = IsDarkTheme();
+        Color bg, card, stroke, fg;
+        if (dark)
+        {
+            bg = Color.FromRgb(0x2B, 0x2B, 0x2B);
+            card = Color.FromRgb(0x33, 0x33, 0x33);
+            stroke = Color.FromRgb(0x45, 0x45, 0x45);
+            fg = Colors.White;
+        }
+        else
+        {
+            bg = Color.FromRgb(0xF9, 0xF9, 0xF9);
+            card = Colors.White;
+            stroke = Color.FromRgb(0xE1, 0xE1, 0xE1);
+            fg = Colors.Black;
+        }
+        var bgB = new SolidColorBrush(bg);
+        var cardB = new SolidColorBrush(card);
+        var strokeB = new SolidColorBrush(stroke);
+        var fgB = new SolidColorBrush(fg);
+        bgB.Freeze(); cardB.Freeze(); strokeB.Freeze(); fgB.Freeze();
+        ImageDropBorder.Resources["ImagePopupBackground"] = bgB;
+        ImageDropBorder.Resources["ImagePopupCard"] = cardB;
+        ImageDropBorder.Resources["ImagePopupStroke"] = strokeB;
+        ImageDropBorder.Resources["ImagePopupForeground"] = fgB;
+    }
+
+    private static bool IsDarkTheme()
+    {
+        try
+        {
+            using var k = Microsoft.Win32.Registry.CurrentUser.OpenSubKey(
+                @"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize");
+            if (k?.GetValue("AppsUseLightTheme") is int v) return v == 0;
+        }
+        catch { }
+        return true;
+    }
+
+    private void ImageDropPopup_Closed(object? sender, EventArgs e) =>
+        ImageDropToggle.IsChecked = false;
+
+    private void ImageCard_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is System.Windows.Controls.Button b && b.Tag is ImageCardItem card)
+        {
+            ImageDropPopup.IsOpen = false;
+            SelectImage(card.Image);
+            if (_step == 2) UpdateSummary();
+        }
+    }
+
+    private static void AnimateStepIn(FrameworkElement panel)
+    {
+        try
+        {
+            var ease = new QuadraticEase { EasingMode = EasingMode.EaseOut };
+            var slide = new TranslateTransform();
+            panel.RenderTransform = slide;
+            panel.BeginAnimation(UIElement.OpacityProperty,
+                new DoubleAnimation(0, 1, TimeSpan.FromSeconds(0.22)) { EasingFunction = ease });
+            slide.BeginAnimation(TranslateTransform.XProperty,
+                new DoubleAnimation(28, 0, TimeSpan.FromSeconds(0.22)) { EasingFunction = ease });
+        }
+        catch { }
+    }
+
     private void UpdateWarning()
     {
         if (WarnText == null || ImageDesc == null) return;
         WarnText.Text = "";
         ImageDesc.Text = "";
-        if (ImageBox.SelectedItem is WindowsImage img)
+        if (_selectedImage is WindowsImage img)
         {
             string size = img.SizeBytes > 0 ? FmtBytes(img.SizeBytes) :
                 (!string.IsNullOrEmpty(img.LocalPath) && File.Exists(img.LocalPath)
@@ -134,7 +296,7 @@ public partial class MainWindow : Window
                     WarnText.Text += (WarnText.Text.Length > 0 ? "\n" : "") +
                         $"⚠ USB too small: {FmtBytes((long)usb.SizeBytes)} < {FmtBytes(need)} needed.";
             }
-            BypassCheck.IsEnabled = img.NeedsTpm && img.OsFamily == "Windows";
+            BypassCheck.IsEnabled = img.OsFamily == "Windows";
             if (!BypassCheck.IsEnabled) BypassCheck.IsChecked = false;
             bool isWin = img.OsFamily == "Windows";
             WinTweaks.Visibility = isWin ? Visibility.Visible : Visibility.Collapsed;
@@ -173,6 +335,7 @@ public partial class MainWindow : Window
         Step1Panel.Visibility = _step == 0 ? Visibility.Visible : Visibility.Collapsed;
         Step2Panel.Visibility = _step == 1 ? Visibility.Visible : Visibility.Collapsed;
         Step3Panel.Visibility = _step == 2 ? Visibility.Visible : Visibility.Collapsed;
+        AnimateStepIn(_step == 0 ? Step1Panel : _step == 1 ? Step2Panel : Step3Panel);
         BackBtn.IsEnabled = _step > 0;
         NextBtn.Visibility = _step < 2 ? Visibility.Visible : Visibility.Collapsed;
         StartBtn.Visibility = _step == 2 ? Visibility.Visible : Visibility.Collapsed;
@@ -188,7 +351,7 @@ public partial class MainWindow : Window
 
     private void UpdateSummary()
     {
-        var img = ImageBox.SelectedItem as WindowsImage;
+        var img = _selectedImage;
         string isoSize = img == null ? "—" :
             img.SizeBytes > 0 ? FmtBytes(img.SizeBytes) :
             (!string.IsNullOrEmpty(img.LocalPath) && File.Exists(img.LocalPath)
@@ -234,14 +397,6 @@ public partial class MainWindow : Window
                 : $"Cache: {items.Count} ISO(s), {CacheService.FormatBytes(total)} in %TEMP%\\Multi-Win.";
         }
         catch { CacheText.Text = ""; }
-    }
-
-    private void FidoBtn_Click(object sender, RoutedEventArgs e)
-    {
-        if (_busy) return;
-        string msg = CatalogService.LaunchMicrosoftFlow(Log);
-        ImageDesc.Text = msg;
-        Log(msg);
     }
 
     private void TargetBox_Changed(object sender, RoutedEventArgs e)
@@ -417,12 +572,12 @@ public partial class MainWindow : Window
         {
             OsFamily = d0.OsFamily,
             LocalPath = path,
-            Icon = d0.Icon
+            Icon = d0.Icon,
+            Vendor = d0.OsFamily == "Windows" ? "Microsoft" : d0.OsFamily == "Linux" ? "Linux" : "Other"
         };
         _images.Add(item);
-        ImageBox.SelectedItem = item;
         SourceBox.SelectedIndex = 0;
-        UpdateWarning();
+        SelectImage(item);
         ImageDesc.Text = $"Inspecting ISO contents...\nFile: {path}";
 
         var d = await IsoInspect.InspectAsync(path);
@@ -436,12 +591,12 @@ public partial class MainWindow : Window
             MinRamMb = d.MinRamMb,
             OsFamily = d.OsFamily,
             Icon = d.Icon,
+            Vendor = d.OsFamily == "Windows" ? "Microsoft" : d.OsFamily == "Linux" ? "Linux" : "Other",
             NeedsTpm = w11,
             NeedsUefi = w11
         };
         _images[idx] = confirmed;
-        ImageBox.SelectedItem = confirmed;
-        UpdateWarning();
+        SelectImage(confirmed);
         ImageDesc.Text = $"Detected: {d.Name} ({(d.FromContents ? "ISO contents" : "file name")})\nFile: {path}";
     }
 
@@ -453,9 +608,12 @@ public partial class MainWindow : Window
             (uri.Scheme != Uri.UriSchemeHttp && uri.Scheme != Uri.UriSchemeHttps))
         { ImageDesc.Text = "Paste a direct http(s) link to an .iso file."; return; }
         string fileName = Uri.UnescapeDataString(Path.GetFileName(uri.LocalPath));
-        if (!fileName.EndsWith(".iso", StringComparison.OrdinalIgnoreCase))
-        { ImageDesc.Text = "Link must point to an .iso file."; return; }
-        var d = IsoDetect.FromFileName(fileName);
+        bool isDrive = ImageService.IsGoogleDriveUrl(url);
+        if (!isDrive && !fileName.EndsWith(".iso", StringComparison.OrdinalIgnoreCase))
+        { ImageDesc.Text = "Link must point to an .iso file (Google Drive share links are also OK)."; return; }
+        var d = isDrive
+            ? new IsoDetect.DetectedOs("Google Drive ISO", "Unknown", "generic", 2048, "Other")
+            : IsoDetect.FromFileName(fileName);
         bool w11url = IsoDetect.IsWindows11(d.Name);
         var item = new WindowsImage(
             Id: "url-" + Guid.NewGuid().ToString("N")[..8],
@@ -470,20 +628,19 @@ public partial class MainWindow : Window
             NeedsUefi: w11url)
         {
             OsFamily = d.OsFamily,
-            Icon = d.Icon
+            Icon = d.Icon,
+            Vendor = d.OsFamily == "Windows" ? "Microsoft" : d.OsFamily == "Linux" ? "Linux" : "Other"
         };
         _images.Add(item);
-        ImageBox.SelectedItem = item;
         SourceBox.SelectedIndex = 0;
-        UpdateWarning();
+        SelectImage(item);
         ImageDesc.Text = $"Checking link...\n{url}";
         long size = await TryGetContentLengthAsync(url);
         int idx = _images.IndexOf(item);
         if (idx < 0) return;
         var sized = item with { SizeBytes = Math.Max(0, size) };
         _images[idx] = sized;
-        ImageBox.SelectedItem = sized;
-        UpdateWarning();
+        SelectImage(sized);
         ImageDesc.Text = size > 0
             ? $"Detected: {d.Name} (file name) · {FmtBytes(size)}\n{url}"
             : $"Detected: {d.Name} (file name, size unknown)\n{url}";
@@ -493,7 +650,14 @@ public partial class MainWindow : Window
     {
         try
         {
+            if (ImageService.TryGetDriveFileId(url, out string gid))
+                url = $"https://drive.usercontent.google.com/download?id={Uri.EscapeDataString(gid)}&export=download&confirm=t";
             using var http = new System.Net.Http.HttpClient { Timeout = TimeSpan.FromSeconds(15) };
+            http.DefaultRequestHeaders.UserAgent.ParseAdd(
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36 Edg/126.0.0.0");
+            if (Uri.TryCreate(url, UriKind.Absolute, out var u) &&
+                u.Host.EndsWith("microsoft.com", StringComparison.OrdinalIgnoreCase))
+                http.DefaultRequestHeaders.Referrer = new Uri("https://www.microsoft.com/software-download/windows11");
             using var req = new System.Net.Http.HttpRequestMessage(System.Net.Http.HttpMethod.Head, url);
             using var resp = await http.SendAsync(req, System.Net.Http.HttpCompletionOption.ResponseHeadersRead);
             return resp.Content.Headers.ContentLength ?? -1;
@@ -510,13 +674,13 @@ public partial class MainWindow : Window
     private void Next_Click(object sender, RoutedEventArgs e)
     {
         if (_busy) return;
-        if (_step == 0 && ImageBox.SelectedItem is null)
+        if (_step == 0 && _selectedImage is null)
         { ImageDesc.Text = "Pick an image first"; return; }
         if (_step == 1)
         {
             if (IsHddMode)
             {
-                if (ImageBox.SelectedItem is WindowsImage hi && hi.OsFamily != "Windows" && hi.OsFamily != "Unknown")
+                if (_selectedImage is WindowsImage hi && hi.OsFamily != "Windows" && hi.OsFamily != "Unknown")
                 { WarnText.Text = "HDD mode supports Windows Setup images only. Switch to USB for this image."; return; }
                 if (HddBox.SelectedItem is null)
                 { WarnText.Text = "Pick an internal drive"; return; }
@@ -563,7 +727,7 @@ public partial class MainWindow : Window
     private async void Start_Click(object sender, RoutedEventArgs e)
     {
         if (_busy) return;
-        if (ImageBox.SelectedItem is not WindowsImage img0)
+        if (_selectedImage is not WindowsImage img0)
         { StatusText.Text = "Pick an image"; return; }
         bool hddMode = IsHddMode;
         UsbDrive? usb = UsbBox.SelectedItem as UsbDrive;
@@ -630,7 +794,7 @@ public partial class MainWindow : Window
             var dir = Path.Combine(Path.GetTempPath(), "Multi-Win");
             Directory.CreateDirectory(dir);
             bool isLocal = !string.IsNullOrEmpty(img.LocalPath);
-            isoPath = isLocal ? img.LocalPath! : Path.Combine(dir, img.Id + ".iso");
+            isoPath = isLocal ? img.LocalPath! : Path.Combine(dir, Path.GetFileName(img.Id) + ".iso");
 
             if (isLocal)
             {
@@ -689,7 +853,7 @@ public partial class MainWindow : Window
                 family = di.OsFamily;
                 Log($"Downloaded image is: {di.Name} ({(di.FromContents ? "ISO contents" : "file name")})");
                 bool dlW11 = IsoDetect.IsWindows11(di.Name);
-                if (family == "Windows" && dlW11 != img.NeedsTpm)
+                if (di.FromContents || (family == "Windows" && dlW11 != img.NeedsTpm))
                 {
                     int diIdx = _images.IndexOf(img);
                     if (diIdx >= 0)
@@ -701,16 +865,16 @@ public partial class MainWindow : Window
                             MinRamMb = di.MinRamMb,
                             OsFamily = di.OsFamily,
                             Icon = di.Icon,
+                            Vendor = di.OsFamily == "Windows" ? "Microsoft" : di.OsFamily == "Linux" ? "Linux" : "Other",
                             NeedsTpm = dlW11,
                             NeedsUefi = dlW11
                         };
                         _images[diIdx] = updated;
-                        ImageBox.SelectedItem = updated;
                         img = updated;
-                        UpdateWarning();
+                        SelectImage(updated);
                         UpdateSummary();
                         Log(dlW11 ? "Confirmed Windows 11 — TPM bypass available."
-                                  : "Not Windows 11 — TPM bypass disabled.");
+                                  : $"Confirmed image: {di.Name}.");
                     }
                 }
             }
@@ -831,3 +995,4 @@ public partial class MainWindow : Window
         }
     }
 }
+

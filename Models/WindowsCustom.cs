@@ -13,3 +13,4 @@ public record WindowsCustom(
     public bool HasTweaks() => BypassTpm || BypassNro || !string.IsNullOrWhiteSpace(Username)
         || SkipPrivacy || PreventBitLocker || HostLocale;
 }
+

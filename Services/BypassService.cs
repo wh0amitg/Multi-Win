@@ -53,7 +53,7 @@ public static class BypassService
             sb.AppendLine("      <RunSynchronous>");
             int o = 1;
             foreach (var cmd in spec)
-                sb.AppendLine($"        <RunSynchronousCommand wcm:action=\"add\"><Order>{o++}</Order><Path>{cmd}</Path></RunSynchronousCommand>");
+                sb.AppendLine($"        <RunSynchronousCommand wcm:action=\"add\"><Order>{o++}</Order><Path>{System.Security.SecurityElement.Escape(cmd)}</Path></RunSynchronousCommand>");
             sb.AppendLine("      </RunSynchronous>");
             sb.AppendLine("    </component>");
             sb.AppendLine("  </settings>");
@@ -115,3 +115,4 @@ public static class BypassService
         return n.Length > 20 ? n[..20] : n;
     }
 }
+

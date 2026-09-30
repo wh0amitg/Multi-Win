@@ -9,7 +9,9 @@
     "SizeBytes": 4972900352,
     "MinRamMb": 2048,
     "NeedsTpm": false,
-    "NeedsUefi": false
+    "NeedsUefi": false,
+    "Vendor": "Microsoft",
+    "OsFamily": "Windows"
   },
   {
     "Id": "vista-sp2-x64",
@@ -21,7 +23,9 @@
     "SizeBytes": 3995324416,
     "MinRamMb": 1024,
     "NeedsTpm": false,
-    "NeedsUefi": false
+    "NeedsUefi": false,
+    "Vendor": "Microsoft",
+    "OsFamily": "Windows"
   },
   {
     "Id": "win81-x64",
@@ -33,7 +37,9 @@
     "SizeBytes": 5997461504,
     "MinRamMb": 2048,
     "NeedsTpm": false,
-    "NeedsUefi": false
+    "NeedsUefi": false,
+    "Vendor": "Microsoft",
+    "OsFamily": "Windows"
   },
   {
     "Id": "win10-22h2-x64",
@@ -45,7 +51,9 @@
     "SizeBytes": 4893900800,
     "MinRamMb": 4096,
     "NeedsTpm": false,
-    "NeedsUefi": false
+    "NeedsUefi": false,
+    "Vendor": "Microsoft",
+    "OsFamily": "Windows"
   },
   {
     "Id": "win10-21h2-x64",
@@ -57,7 +65,9 @@
     "SizeBytes": 5344178176,
     "MinRamMb": 4096,
     "NeedsTpm": false,
-    "NeedsUefi": false
+    "NeedsUefi": false,
+    "Vendor": "Microsoft",
+    "OsFamily": "Windows"
   },
   {
     "Id": "win10-20h2-x64",
@@ -69,7 +79,9 @@
     "SizeBytes": 4567336960,
     "MinRamMb": 4096,
     "NeedsTpm": false,
-    "NeedsUefi": false
+    "NeedsUefi": false,
+    "Vendor": "Microsoft",
+    "OsFamily": "Windows"
   },
   {
     "Id": "win11-24h2-x64",
@@ -81,7 +93,9 @@
     "SizeBytes": 5819484160,
     "MinRamMb": 4096,
     "NeedsTpm": true,
-    "NeedsUefi": true
+    "NeedsUefi": true,
+    "Vendor": "Microsoft",
+    "OsFamily": "Windows"
   },
   {
     "Id": "win11-23h2-x64",
@@ -93,7 +107,9 @@
     "SizeBytes": 6373011456,
     "MinRamMb": 4096,
     "NeedsTpm": true,
-    "NeedsUefi": true
+    "NeedsUefi": true,
+    "Vendor": "Microsoft",
+    "OsFamily": "Windows"
   },
   {
     "Id": "win11-25h2-x64",
@@ -105,6 +121,22 @@
     "SizeBytes": 6382419968,
     "MinRamMb": 4096,
     "NeedsTpm": true,
-    "NeedsUefi": true
+    "NeedsUefi": true,
+    "Vendor": "Microsoft",
+    "OsFamily": "Windows"
+  },
+  {
+    "Id": "win11-26h2-x64",
+    "Name": "Windows 11 26H2 x64 (build 26300.9457)",
+    "Version": "11",
+    "Arch": "x64",
+    "DownloadUrl": "https://drive.usercontent.google.com/download?id=1NJlMfjLQRgxCYylR0kjH5-KzeCC73zIM&export=download&confirm=t",
+    "Sha256": "",
+    "SizeBytes": 9047330816,
+    "MinRamMb": 4096,
+    "NeedsTpm": true,
+    "NeedsUefi": true,
+    "Vendor": "Microsoft",
+    "OsFamily": "Windows"
   }
 ]

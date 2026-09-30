@@ -360,8 +360,8 @@ public class UsbService
         string vol = SanitizeLabel(label);
         string script = TempScriptPath("multiwin-diskpart");
         string convert = style == PartitionStyle.Gpt ? "convert gpt" : "convert mbr";
-        // GPT: no "active" flag (MBR-only concept); single data partition is enough
-        // for UEFI boot from FAT32. MBR keeps "active" for BIOS boot.
+
+
         string active = style == PartitionStyle.Gpt ? "" : "active\n";
         File.WriteAllText(script,
             $"select disk {disk}\nclean\n{convert}\ncreate partition primary\n" +
@@ -390,8 +390,8 @@ public class UsbService
     private static string? QueryUsbLetter(int disk, CancellationToken ct)
     {
         string? found = null;
-        // Disk number is validated int; script itself is static. EncodedCommand
-        // avoids any quoting/injection issues with inline -Command strings.
+
+
         string ps = "(Get-Partition -DiskNumber " + disk +
             " -ErrorAction SilentlyContinue | Where-Object DriveLetter | Select-Object -First 1).DriveLetter";
         RunEncodedPowerShell(ps,
@@ -413,9 +413,9 @@ public class UsbService
     private static string MountIso(string isoPath, Action<string> emit, CancellationToken ct)
     {
         string? found = null;
-        // Script travels base64-encoded (-EncodedCommand), so cmd.exe quoting is a
-        // non-issue. The path itself is a single-quoted PowerShell literal where
-        // only ' needs escaping (doubled) — no interpolation, no injection.
+
+
+
         string q = ToPsSingleQuoted(Path.GetFullPath(isoPath));
         string b64 = EncodePowerShell(
             $"Mount-DiskImage -ImagePath {q} | Out-Null; " +
@@ -461,9 +461,9 @@ public class UsbService
 
     private static void AssertUsbDisk(int disk, string deviceId)
     {
-        // Never concatenate deviceId into WQL: validate the number first, then
-        // query by integer Index. Anything that doesn't parse as PHYSICALDRIVEn
-        // (or whose Index doesn't match) aborts.
+
+
+
         int parsed = ParseDiskNumber(deviceId);
         if (parsed != disk)
             throw new IOException($"Disk number mismatch ({disk} vs {parsed}), aborting.");
@@ -526,7 +526,7 @@ public class UsbService
                 }
             }
             catch { }
-            try { Task.WaitAll(readOut, readErr, 2000); } catch { }
+            try { Task.WaitAll(new[] { readOut, readErr }, 2000); } catch { }
             throw;
         }
     }
@@ -582,3 +582,4 @@ public class UsbService
         _ => $"{b / 1024.0 / 1024 / 1024:F2} GB",
     };
 }
+

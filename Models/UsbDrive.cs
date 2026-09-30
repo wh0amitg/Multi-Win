@@ -10,3 +10,4 @@ public record UsbDrive(
     public string PartitionStyle { get; init; } = "?";
     public string Display { get; init; } = "";
 }
+

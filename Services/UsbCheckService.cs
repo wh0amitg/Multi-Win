@@ -6,11 +6,11 @@ public static class UsbCheckService
 {
     private const int BufSize = 1 << 20;
 
-    /// <summary>
-    /// Filesystem-level write/read spot check. This is NOT a full surface scan:
-    /// it writes a temp file and reads it back, which catches dying drives and
-    /// fake-size sticks but cannot remap hardware sectors like chkdsk /r.
-    /// </summary>
+
+
+
+
+
     public static void CheckBadBlocks(string usbLetter, int passes,
         Action<string> log, Action<double>? progress = null, CancellationToken ct = default)
     {
@@ -209,3 +209,4 @@ public static class UsbCheckService
 
     private static string Fmt(long b) => UsbService.Fmt(b);
 }
+

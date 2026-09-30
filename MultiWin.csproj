@@ -11,7 +11,8 @@
     <AssemblyName>Multi-Win</AssemblyName>
     <Product>Multi-Win</Product>
     <AssemblyTitle>Multi-Win</AssemblyTitle>
-    <Version>0.5.0</Version>
+    <Version>0.6.0</Version>
+    <RuntimeIdentifiers>win-x64;win-x86;win-arm64</RuntimeIdentifiers>
   </PropertyGroup>
 
   <ItemGroup>

@@ -26,7 +26,7 @@ public static class IsoInspect
         {
             var baseOs = fallback.OsFamily == "Windows"
                 ? fallback with { FromContents = true }
-                : new IsoDetect.DetectedOs("Windows (custom ISO)", "Windows", "windows", 4096, true);
+                : new IsoDetect.DetectedOs("Windows (custom ISO)", "Windows", "windows", 4096, "Microsoft", true);
             return IsoDetect.RefineWindowsName(root, baseOs);
         }
 
@@ -35,27 +35,33 @@ public static class IsoInspect
         {
             string first = File.ReadLines(info).FirstOrDefault()?.Trim() ?? "";
             string s = first.ToLowerInvariant();
-            if (s.Contains("kali")) return new("Kali Linux", "Linux", "kali", 2048, true);
-            if (s.Contains("linux mint")) return new("Linux Mint", "Linux", "linux", 2048, true);
-            if (s.Contains("ubuntu")) return new(Trim(first, "Ubuntu"), "Linux", "linux", 2048, true);
-            if (s.Contains("debian")) return new(Trim(first, "Debian"), "Linux", "linux", 1024, true);
-            if (s.Contains("parrot")) return new("Parrot OS", "Linux", "linux", 2048, true);
-            if (s.Contains("tails")) return new("Tails", "Linux", "linux", 2048, true);
-            if (first.Length > 0) return new(Trim(first, "Linux"), "Linux", "linux", 2048, true);
+            if (s.Contains("kali")) return new("Kali Linux", "Linux", "kali", 2048, "Kali", true);
+            if (s.Contains("linux mint")) return new("Linux Mint", "Linux", "linux", 2048, "Linux Mint", true);
+            if (s.Contains("ubuntu")) return new(Trim(first, "Ubuntu"), "Linux", "linux", 2048, "Canonical", true);
+            if (s.Contains("debian")) return new(Trim(first, "Debian"), "Linux", "linux", 1024, "Debian", true);
+            if (s.Contains("parrot")) return new("Parrot OS", "Linux", "linux", 2048, "Parrot", true);
+            if (s.Contains("tails")) return new("Tails", "Linux", "linux", 2048, "Tails", true);
+            if (first.Length > 0) return new(Trim(first, "Linux"), "Linux", "linux", 2048, "Linux", true);
         }
 
-        if (Exists(@"\arch")) return new("Arch Linux", "Linux", "linux", 1024, true);
+        if (Exists(@"\arch")) return fallback.OsFamily == "Linux"
+            ? fallback with { FromContents = true }
+            : new("Arch Linux", "Linux", "linux", 1024, "Arch Linux", true);
         if (File.Exists(root + @"\.discinfo"))
-            return new(DiscInfoName(root) ?? "Fedora/RHEL family", "Linux", "linux", 2048, true);
-        if (Exists(@"\LiveOS")) return new("Linux Live (RHEL family)", "Linux", "linux", 2048, true);
+            return fallback.OsFamily == "Linux"
+                ? fallback with { FromContents = true }
+                : new(DiscInfoName(root) ?? "Fedora/RHEL family", "Linux", "linux", 2048, "Fedora Project", true);
+        if (Exists(@"\LiveOS")) return fallback.OsFamily == "Linux"
+            ? fallback with { FromContents = true }
+            : new("Linux Live (RHEL family)", "Linux", "linux", 2048, "Red Hat", true);
         if (Exists(@"\casper"))
             return fallback.OsFamily == "Linux"
                 ? fallback with { FromContents = true }
-                : new("Ubuntu-based Linux", "Linux", "linux", 2048, true);
+                : new("Ubuntu-based Linux", "Linux", "linux", 2048, "Canonical", true);
         if (Exists(@"\isolinux") || Exists(@"\syslinux") || Exists(@"\boot\grub"))
             return fallback.OsFamily == "Linux"
                 ? fallback with { FromContents = true }
-                : new("Linux (bootloader detected)", "Linux", "linux", 2048, true);
+                : new("Linux (bootloader detected)", "Linux", "linux", 2048, "Linux", true);
 
         return fallback;
     }
@@ -83,3 +89,4 @@ public static class IsoInspect
         catch { return null; }
     }
 }
+

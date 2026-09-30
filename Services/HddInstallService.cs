@@ -6,14 +6,14 @@ using WinMultiInstaller.Models;
 
 namespace WinMultiInstaller.Services;
 
-/// <summary>
-/// "No USB stick" mode: copies Windows Setup files to a folder on an internal
-/// drive and registers a ONE-SHOT boot entry (bcdedit /bootsequence) that loads
-/// sources\boot.wim via ramdisk. The PC boots into Setup once; the default boot
-/// entry is untouched. After Setup finishes, <see cref="RemoveHddSetup"/> (or the
-/// generated remove-hdd-setup.cmd) deletes the folder and the BCD entry.
-/// Only Windows images are supported; Linux ISOs still need a USB stick.
-/// </summary>
+
+
+
+
+
+
+
+
 public class HddInstallService
 {
     public const string SetupDirName = "MULTIWIN-SETUP";
@@ -55,7 +55,7 @@ public class HddInstallService
             {
                 if (d.DriveType != DriveType.Fixed || !d.IsReady) continue;
                 string root = d.RootDirectory.FullName.TrimEnd('\\');
-                if (root.Length != 2 || root[1] != ':') continue; // drive-letter volumes only
+                if (root.Length != 2 || root[1] != ':') continue;
                 string dir = Path.Combine(root, SetupDirName);
                 list.Add(new HddTarget(root, dir, d.AvailableFreeSpace));
             }
@@ -158,7 +158,7 @@ public class HddInstallService
         }
         try
         {
-            // Last resort: schedule for next reboot.
+
             string cmd = Path.Combine(st.SetupDir, "remove-hdd-setup.cmd");
             if (File.Exists(cmd))
                 Run("schtasks", $"/create /tn \"MultiWinCleanup\" /tr \"\\\"{cmd}\\\"\" /sc onstart /ru SYSTEM /f", L, CancellationToken.None);
@@ -195,7 +195,7 @@ public class HddInstallService
 
     private static void BcdSetRamdiskOptions(string driveRoot, string sdiPath, Action<string> L, CancellationToken ct)
     {
-        // {ramdiskoptions} is a well-known alias; create is a no-op if it exists.
+
         try { Bcd("create {ramdiskoptions} /d \"Multi-Win ramdisk\"", L, ct); } catch { }
         Bcd($"set {{ramdiskoptions}} ramdisksdidevice partition={driveRoot}", L, ct);
         Bcd($"set {{ramdiskoptions}} ramdisksdipath {sdiPath}", L, ct);
@@ -262,3 +262,4 @@ public class HddInstallService
         if (sb.Length > 0) onLine?.Invoke(sb.ToString());
     }
 }
+

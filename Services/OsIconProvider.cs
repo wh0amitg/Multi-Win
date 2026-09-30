@@ -12,7 +12,9 @@ public static class OsIconProvider
         foreach (string dir in AssetDirs())
             foreach (string k in keys.Distinct())
             {
-                string p = Path.Combine(dir, k + ".png");
+                string safe = Path.GetFileName(k);
+                if (string.IsNullOrEmpty(safe)) continue;
+                string p = Path.Combine(dir, safe + ".png");
                 if (File.Exists(p)) return p;
             }
         return null;
@@ -25,3 +27,4 @@ public static class OsIconProvider
             AppDomain.CurrentDomain.BaseDirectory, "..", "..", "..", "Assets"));
     }
 }
+

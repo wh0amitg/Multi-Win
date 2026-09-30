@@ -5,37 +5,44 @@ namespace WinMultiInstaller.Services;
 
 public static class IsoDetect
 {
-    public record DetectedOs(string Name, string OsFamily, string Icon, int MinRamMb, bool FromContents = false);
+    public record DetectedOs(string Name, string OsFamily, string Icon, int MinRamMb, string Vendor, bool FromContents = false);
 
     public static DetectedOs FromFileName(string filePath)
     {
         string stem = Path.GetFileNameWithoutExtension(filePath).Trim();
         string s = stem.ToLowerInvariant();
 
-        DetectedOs win(string name) => new(name, "Windows", "windows", 4096);
-        DetectedOs lin(string name, string icon, int ram) => new(name, "Linux", icon, ram);
+        DetectedOs win(string name) => new(name, "Windows", "windows", 4096, "Microsoft");
+        DetectedOs lin(string name, string icon, int ram, string vendor) => new(name, "Linux", icon, ram, vendor);
 
-        if (s.StartsWith("kali-linux-") || s.Contains("kali")) return lin("Kali Linux", "kali", 2048);
-        if (s.Contains("ubuntu")) return lin("Ubuntu", "linux", 2048);
-        if (s.Contains("linuxmint") || s.Contains("mint")) return lin("Linux Mint", "linux", 2048);
-        if (s.Contains("debian")) return lin("Debian", "linux", 1024);
-        if (s.Contains("fedora")) return lin("Fedora", "linux", 2048);
-        if (s.Contains("archlinux")) return lin("Arch Linux", "linux", 1024);
-        if (s.Contains("manjaro")) return lin("Manjaro", "linux", 2048);
-        if (s.Contains("opensuse") || s.Contains("tumbleweed") || s.Contains("leap")) return lin("openSUSE", "linux", 2048);
-        if (s.Contains("centos")) return lin("CentOS", "linux", 2048);
-        if (s.Contains("almalinux") || s.Contains("alma")) return lin("AlmaLinux", "linux", 2048);
-        if (s.Contains("rocky")) return lin("Rocky Linux", "linux", 2048);
-        if (s.Contains("rhel") || s.Contains("redhat")) return lin("Red Hat Enterprise Linux", "linux", 2048);
-        if (s.Contains("tails")) return lin("Tails", "linux", 2048);
-        if (s.Contains("parrot")) return lin("Parrot OS", "linux", 2048);
-        if (s.Contains("zorin")) return lin("Zorin OS", "linux", 2048);
-        if (s.Contains("endeavour")) return lin("EndeavourOS", "linux", 2048);
-        if (s.Contains("garuda")) return lin("Garuda Linux", "linux", 4096);
-        if (s.Contains("pop-os") || s.Contains("pop_os") || s.Contains("pop!")) return lin("Pop!_OS", "linux", 2048);
-        if (s.Contains("elementary")) return lin("elementary OS", "linux", 2048);
-        if (s.StartsWith("mx-") || s.Contains("mx-linux")) return lin("MX Linux", "linux", 1024);
-        if (s.Contains("gentoo")) return lin("Gentoo", "linux", 1024);
+
+
+        if (s.Contains("26h2") || s.Contains("25h2") || s.Contains("24h2") || s.Contains("23h2") ||
+            s.Contains("26100") || s.Contains("26200") || s.Contains("26300"))
+            return win("Windows 11");
+
+        if (s.StartsWith("kali-linux-") || s.Contains("kali")) return lin("Kali Linux", "kali", 2048, "Kali");
+        if (s.Contains("ubuntu")) return lin("Ubuntu", "linux", 2048, "Canonical");
+        if (s.Contains("linuxmint") || s.Contains("mint")) return lin("Linux Mint", "linux", 2048, "Linux Mint");
+        if (s.Contains("debian")) return lin("Debian", "linux", 1024, "Debian");
+        if (s.Contains("fedora")) return lin("Fedora", "linux", 2048, "Fedora Project");
+        if (s.Contains("cachy")) return lin("CachyOS", "linux", 2048, "CachyOS");
+        if (s.Contains("archlinux") || s.Contains("arch-linux")) return lin("Arch Linux", "linux", 1024, "Arch Linux");
+        if (s.Contains("manjaro")) return lin("Manjaro", "linux", 2048, "Manjaro");
+        if (s.Contains("opensuse") || s.Contains("tumbleweed") || s.Contains("leap")) return lin("openSUSE", "linux", 2048, "openSUSE");
+        if (s.Contains("centos")) return lin("CentOS", "linux", 2048, "CentOS");
+        if (s.Contains("almalinux") || s.Contains("alma")) return lin("AlmaLinux", "linux", 2048, "AlmaLinux");
+        if (s.Contains("rocky")) return lin("Rocky Linux", "linux", 2048, "Rocky");
+        if (s.Contains("rhel") || s.Contains("redhat")) return lin("Red Hat Enterprise Linux", "linux", 2048, "Red Hat");
+        if (s.Contains("tails")) return lin("Tails", "linux", 2048, "Tails");
+        if (s.Contains("parrot")) return lin("Parrot OS", "linux", 2048, "Parrot");
+        if (s.Contains("zorin")) return lin("Zorin OS", "linux", 2048, "Zorin");
+        if (s.Contains("endeavour")) return lin("EndeavourOS", "linux", 2048, "EndeavourOS");
+        if (s.Contains("garuda")) return lin("Garuda Linux", "linux", 4096, "Garuda");
+        if (s.Contains("pop-os") || s.Contains("pop_os") || s.Contains("pop!")) return lin("Pop!_OS", "linux", 2048, "System76");
+        if (s.Contains("elementary")) return lin("elementary OS", "linux", 2048, "elementary");
+        if (s.StartsWith("mx-") || s.Contains("mx-linux")) return lin("MX Linux", "linux", 1024, "MX Linux");
+        if (s.Contains("gentoo")) return lin("Gentoo", "linux", 1024, "Gentoo");
 
         if (s.Contains("windows"))
         {
@@ -65,8 +72,8 @@ public static class IsoDetect
             };
         }
 
-        if (s.Contains("linux")) return lin(Prettify(stem), "linux", 2048);
-        return new DetectedOs(Prettify(stem), "Unknown", "generic", 2048);
+        if (s.Contains("linux")) return lin(Prettify(stem), "linux", 2048, "Linux");
+        return new DetectedOs(Prettify(stem), "Unknown", "generic", 2048, "Other");
     }
 
     public static string DetectArch(string filePath)
@@ -114,3 +121,4 @@ public static class IsoDetect
         return t.Length == 0 ? stem : char.ToUpperInvariant(t[0]) + t[1..];
     }
 }
+

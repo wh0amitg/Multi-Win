@@ -65,6 +65,7 @@ public class CatalogService
     private static bool IsSane(WindowsImage i)
     {
         if (string.IsNullOrWhiteSpace(i.Id) || string.IsNullOrWhiteSpace(i.Name)) return false;
+        if (!System.Text.RegularExpressions.Regex.IsMatch(i.Id, @"^[A-Za-z0-9][A-Za-z0-9._-]{0,80}$")) return false;
         if (i.SizeBytes < 0 || i.MinRamMb < 0) return false;
         if (!string.IsNullOrWhiteSpace(i.DownloadUrl))
         {
@@ -108,3 +109,4 @@ public class CatalogService
                 "Assets\\Fido.ps1 from " + FidoUrl + " next to the exe — then this button runs it.";
     }
 }
+

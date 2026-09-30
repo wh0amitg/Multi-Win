@@ -3,6 +3,7 @@ using System.Net;
 using System.Net.Http;
 using System.Net.Http.Headers;
 using System.Security.Cryptography;
+using System.Text.RegularExpressions;
 
 namespace WinMultiInstaller.Services;
 
@@ -14,15 +15,91 @@ public class ImageService
         {
             AutomaticDecompression = DecompressionMethods.All,
             AllowAutoRedirect = true,
-            MaxAutomaticRedirections = 5,
+            MaxAutomaticRedirections = 10,
+            UseCookies = true,
+            CookieContainer = new CookieContainer(),
         };
         var c = new HttpClient(h, disposeHandler: true)
         {
-            // Downloads are multi-GB; per-request cancellation is driven by the token.
+
             Timeout = Timeout.InfiniteTimeSpan,
         };
-        c.DefaultRequestHeaders.UserAgent.ParseAdd("Multi-Win/0.6");
+
+
+        c.DefaultRequestHeaders.UserAgent.ParseAdd(
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36 Edg/126.0.0.0");
+        c.DefaultRequestHeaders.Accept.ParseAdd("*/*");
+        c.DefaultRequestHeaders.AcceptLanguage.ParseAdd("en-US,en;q=0.9");
         return c;
+    }
+
+    private static bool IsMicrosoftHost(string url) =>
+        Uri.TryCreate(url, UriKind.Absolute, out var u) &&
+        u.Host.EndsWith("microsoft.com", StringComparison.OrdinalIgnoreCase);
+
+    private static void ApplyMicrosoftHeaders(HttpRequestMessage req) =>
+        req.Headers.Referrer = new Uri("https://www.microsoft.com/software-download/windows11");
+
+    private static void ThrowIfHtmlPage(HttpResponseMessage resp, string url)
+    {
+        string media = resp.Content.Headers.ContentType?.MediaType ?? "";
+        if (media.StartsWith("text/html", StringComparison.OrdinalIgnoreCase))
+            throw new IOException(
+                "Server returned an HTML page instead of the ISO file. " +
+                "Microsoft download links are session-bound and expire quickly — " +
+                "generate a fresh link and paste it again.");
+    }
+
+    private static bool TryGetDriveId(string url, out string id)
+    {
+        id = "";
+        if (!Uri.TryCreate(url, UriKind.Absolute, out var u)) return false;
+        string host = u.Host.ToLowerInvariant();
+        if (host != "drive.google.com" && host != "docs.google.com" &&
+            !host.EndsWith(".drive.google.com") && !host.EndsWith("drive.usercontent.google.com"))
+            return false;
+        var m = Regex.Match(u.Query, @"[?&]id=([^&]+)");
+        if (m.Success) { id = Uri.UnescapeDataString(m.Groups[1].Value); return true; }
+        m = Regex.Match(u.AbsolutePath, @"/file/d/([^/]+)");
+        if (m.Success) { id = m.Groups[1].Value; return true; }
+        return false;
+    }
+
+    public static bool IsGoogleDriveUrl(string url) => TryGetDriveId(url, out _);
+
+    public static bool TryGetDriveFileId(string url, out string id) => TryGetDriveId(url, out id);
+
+
+
+    private static async Task<string> ResolveDriveUrlAsync(HttpClient http, string url, CancellationToken ct)
+    {
+        if (!TryGetDriveId(url, out string id)) return url;
+        string direct = $"https://drive.usercontent.google.com/download?id={Uri.EscapeDataString(id)}&export=download&confirm=t";
+        using (var probe = new HttpRequestMessage(HttpMethod.Get, direct))
+        {
+            probe.Headers.Range = new RangeHeaderValue(0, 0);
+            using var pr = await http.SendAsync(probe, HttpCompletionOption.ResponseHeadersRead, ct).ConfigureAwait(false);
+            string media = pr.Content.Headers.ContentType?.MediaType ?? "";
+            if ((pr.StatusCode == HttpStatusCode.OK || pr.StatusCode == HttpStatusCode.PartialContent) &&
+                !media.StartsWith("text/html", StringComparison.OrdinalIgnoreCase))
+                return direct;
+        }
+        string pageUrl = $"https://drive.google.com/uc?export=download&id={Uri.EscapeDataString(id)}";
+        using var pageReq = new HttpRequestMessage(HttpMethod.Get, pageUrl);
+        using var pageResp = await http.SendAsync(pageReq, HttpCompletionOption.ResponseHeadersRead, ct).ConfigureAwait(false);
+        pageResp.EnsureSuccessStatusCode();
+        string html = await pageResp.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
+        var m = Regex.Match(html, @"(/uc\?export=download[^""'\s<>]*confirm[^""'\s<>]*)");
+        string confirmUrl;
+        if (m.Success)
+            confirmUrl = "https://drive.google.com" + WebUtility.HtmlDecode(m.Groups[1].Value);
+        else if ((m = Regex.Match(html, @"confirm=([0-9A-Za-z_\-]+)")).Success)
+            confirmUrl = $"https://drive.google.com/uc?export=download&confirm={m.Groups[1].Value}&id={Uri.EscapeDataString(id)}";
+        else
+            throw new IOException(
+                "Google Drive asked for a download confirmation this tool can't pass. " +
+                "Open the link in a browser once, or check the file sharing settings.");
+        return confirmUrl;
     }
 
     public record DownloadProgress(
@@ -58,27 +135,30 @@ public class ImageService
         IProgress<DownloadProgress>? progress, CancellationToken ct)
     {
         using var http = CreateClient();
+        url = await ResolveDriveUrlAsync(http, url, ct).ConfigureAwait(false);
         long existing = 0;
         try { if (File.Exists(destPath)) existing = new FileInfo(destPath).Length; } catch { existing = 0; }
 
         using var req = new HttpRequestMessage(HttpMethod.Get, url);
+        if (IsMicrosoftHost(url)) ApplyMicrosoftHeaders(req);
         if (existing > 0)
             req.Headers.Range = new RangeHeaderValue(existing, null);
 
         using var resp = await http.SendAsync(req, HttpCompletionOption.ResponseHeadersRead, ct).ConfigureAwait(false);
         if (existing > 0 && resp.StatusCode == HttpStatusCode.RequestedRangeNotSatisfiable)
         {
-            // Server can't resume; restart from scratch.
+
             existing = 0;
             await DownloadOnceFreshAsync(url, destPath, progress, ct).ConfigureAwait(false);
             return;
         }
         if (existing > 0 && resp.StatusCode != HttpStatusCode.PartialContent)
         {
-            // Server ignored Range; restart to avoid a corrupt mix.
+
             existing = 0;
         }
         else resp.EnsureSuccessStatusCode();
+        ThrowIfHtmlPage(resp, url);
 
         var total = (resp.Content.Headers.ContentLength ?? -1L);
         long fullTotal = existing + (total >= 0 ? total : 0);
@@ -117,8 +197,12 @@ public class ImageService
     {
         try { if (File.Exists(destPath)) File.Delete(destPath); } catch { }
         using var http = CreateClient();
-        using var resp = await http.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, ct).ConfigureAwait(false);
+        url = await ResolveDriveUrlAsync(http, url, ct).ConfigureAwait(false);
+        using var req = new HttpRequestMessage(HttpMethod.Get, url);
+        if (IsMicrosoftHost(url)) ApplyMicrosoftHeaders(req);
+        using var resp = await http.SendAsync(req, HttpCompletionOption.ResponseHeadersRead, ct).ConfigureAwait(false);
         resp.EnsureSuccessStatusCode();
+        ThrowIfHtmlPage(resp, url);
         var total = resp.Content.Headers.ContentLength ?? -1L;
         await using var src = await resp.Content.ReadAsStreamAsync(ct).ConfigureAwait(false);
         await using var dst = File.Create(destPath);
@@ -149,3 +233,4 @@ public class ImageService
         return Convert.ToHexString(sha.ComputeHash(s)).ToLowerInvariant();
     }
 }
+

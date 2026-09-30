@@ -1,3 +1,4 @@
+using System.IO;
 using System.Management;
 using System.Runtime.InteropServices;
 using WinMultiInstaller.Models;
@@ -38,7 +39,7 @@ public class HardwareService
 
     private static ManagementObjectSearcher WithTimeout(string scope, string query, int seconds = 10)
     {
-        var options = new EnumerationOptions { Timeout = TimeSpan.FromSeconds(seconds), ReturnImmediately = true };
+        var options = new System.Management.EnumerationOptions { Timeout = TimeSpan.FromSeconds(seconds), ReturnImmediately = true };
         var ms = string.IsNullOrEmpty(scope) ? new ManagementScope(@"\\.\root\cimv2") : new ManagementScope(scope);
         return new ManagementObjectSearcher(ms, new ObjectQuery(query), options);
     }
@@ -55,10 +56,10 @@ public class HardwareService
                 bool enabled = IsTruthy(o["IsEnabled_InitialValue"]);
                 bool activated = IsTruthy(o["IsActivated_InitialValue"]);
                 string spec = o["SpecVersion"]?.ToString() ?? "";
-                // TPM 2.0 reports SpecVersion like "2.0, 0, 1.16". Accept 2.x.
+
                 bool is2x = spec.Split(',')[0].Trim().StartsWith("2", StringComparison.Ordinal);
                 if (enabled && activated && is2x) return true;
-                // Fall back: any enabled TPM counts as present (caller warns about 1.2).
+
                 if (enabled && activated) return true;
             }
         }
@@ -83,12 +84,12 @@ public class HardwareService
         {
             uint t = 0;
             if (GetFirmwareType(ref t))
-                return t == 2; // FirmwareTypeUefi
+                return t == 2;
         }
         catch { }
         try
         {
-            // Fallback: SecureBoot UEFI variable presence implies UEFI boot.
+
             using var k = Microsoft.Win32.Registry.LocalMachine.OpenSubKey(
                 @"SYSTEM\CurrentControlSet\Control\SecureBoot\State");
             if (k?.GetValue("UEFISecureBootEnabled") != null) return true;
@@ -97,3 +98,4 @@ public class HardwareService
         return false;
     }
 }
+
